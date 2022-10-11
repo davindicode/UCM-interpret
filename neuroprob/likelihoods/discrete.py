@@ -176,7 +176,7 @@ class Universal(base._likelihood):
         
         :param torch.Tensor counts: spike counts of some tensor shape
         :param int max_counts: size of the event dimension (max_counts + 1)
-        :returns: one-hot representation of shape (counts.shape, event)
+        :returns: one-hot representation of shape (*counts.shape, event)
         :rtype: torch.tensor
         """
         km = self.K+1
@@ -204,7 +204,7 @@ class Universal(base._likelihood):
     
     def sample_helper(self, h, b, neuron, samples):
         """
-        NLL helper function for sample evaluation. Note the F_mu dimensions here is equal to NxC.
+        NLL helper function for sample evaluation.
         """
         batch_edge, _, _ = self.batch_info
         logp = self.get_logp(h, neuron)
@@ -219,6 +219,7 @@ class Universal(base._likelihood):
     def _neuron_to_F(self, neuron):
         """
         Access subset of neurons in expanded space.
+        Note the F_dims here is equal to NxC flattened.
         """
         neuron = self._validate_neuron(neuron)
         if len(neuron) == self.neurons:

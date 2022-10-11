@@ -21,9 +21,9 @@ import lib
 
 
 ### data
-def get_dataset(session_id, phase, bin_size, single_spikes=False):
+def get_dataset(session_id, phase, bin_size, single_spikes=False, path='../data/'):
 
-    data = np.load('../data/Mouse{}_{}.npz'.format(session_id, phase))
+    data = np.load(path + 'Mouse{}_{}.npz'.format(session_id, phase))
     spktrain = data['spktrain']
     x_t = data['x_t']
     y_t = data['y_t']

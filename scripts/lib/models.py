@@ -40,15 +40,15 @@ def get_basis(basis_mode='ew'):
         
     elif basis_mode == 'qd': # exp and full quadratic
         def mix(x):
-            N = x.shape[-1]
-            out = torch.empty((*x.shape[:-1], N*(N-1)//2), dtype=x.dtype).to(x.device)
+            C = x.shape[-1]
+            out = torch.empty((*x.shape[:-1], C*(C-1)//2), dtype=x.dtype).to(x.device)
             k = 0
-            for n in range(1, N):
-                for n_ in range(n):
-                    out[..., k] = x[..., n]*x[..., n_]
+            for c in range(1, C):
+                for c_ in range(c):
+                    out[..., k] = x[..., c]*x[..., c_]
                     k += 1
                 
-            return out
+            return out  # shape (..., C*(C-1)/2)
         
         basis = (lambda x: x, lambda x: x**2, lambda x: torch.exp(x), lambda x: mix(x))
     
@@ -67,15 +67,14 @@ class net(nn.Module):
         expand_C = torch.cat([f_(torch.ones(1, self.C)) for f_ in self.basis], dim=-1).shape[-1]
         
         mnet = nprb.neural_nets.networks.Parallel_MLP(
-            [], expand_C, (max_count+1), channels, shared_W=shared_W, 
-            nonlin=nprb.neural_nets.networks.Siren(), out=None
-        )
+            [], expand_C, (max_count+1), channels, shared_W=shared_W, out=None
+        )  # single linear mapping
         self.add_module('mnet', mnet)
         
         
     def forward(self, input, neuron):
         """
-        :param torch.tensor input: input of shape (samplesxtime, channelsxin_dims)
+        :param torch.tensor input: input of shape (samplesxtime, in_dimsxchannels)
         """
         input = input.view(input.shape[0], -1, self.C)
         input = torch.cat([f_(input) for f_ in self.basis], dim=-1)

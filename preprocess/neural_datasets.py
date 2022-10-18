@@ -7,7 +7,7 @@ import glob
 import sys
 sys.path.append("..") # access to library
 
-from neuroppl.utils.signal import ConsecutiveArrays, TrueIslands, WrapPi, linear_interpolate
+from neuroprob.utils.signal import ConsecutiveArrays, TrueIslands, WrapPi, linear_interpolate
 
 
 
@@ -1540,115 +1540,6 @@ def rat_A1(datadir, save_file):
     
     
     return
-
-
-
-
-#%%
-​
-import numpy as np
-​
-import scipy.io # needed for older versions of MATLAB files\
-import h5py # MATLAB files > v7.3\
-from scipy.interpolate import CubicSpline
-​
-import pickle
-​
-def interpolate(t, x, new_t):
-    #fit cubic spline to x as a function of t and extract data at new_t
-    cs = CubicSpline(t, x)
-    return cs(new_t)
-​
-def widloski(datadir, savedir, session, tbin=0.005):
-    """
-    There are three sessions recorded back to back on the same day. You can restrict analysis to any one of them using the session times:
-    Session 1: 11365 - 14408 sec
-    Session 2: 18791 - 21200 sec
-    Session 3 (the open field) : 25742 - 27802 sec
-​
-    The "behavior" file contains "positions" variable concatenated for all three sessions.
-    1st col: time stamps (in sec); 2nd/3rd cols: x and y positions; 4th col: speed; 5th col: head direction.
-​
-    The "clusters" file is a struct, with each element of the struct a putative cluster. One of the fields is "spkTime" (in sec). There are also fields containing cluster metrics, which you'll want to use to filter clusters for decoding. I use: 
-     noise_overlap<0.03 & isolation>0.9 & peak_snr>1.5 + some min threshold on firing rate (like >0.01 Hz for any given session).
-​
-    The "binDecoding_08" file contains the result of a sliding decoder (80 ms wide, shifted in 5 ms increments) applied to the entirety of each session. The data consists of the changing center of mass of the posterior as well as the posterior peak value and "spread" (how punctate the posterior is) as a function of time. There are 3 elements in the struct called "decoder_binDecoding", one for each session.
-​
-    Lastly, if you only want replays, then look at the "replayEvents" file. Like the "binDecoding_08" file, there is a struct with 3 elements corresponding to the three sessions, except that individual candidate replays have been separated out. Each replay has many subfields, but the main ones to care about are "timePoints" (the beginning and end of the event), "replay" (the center of mass changing across time bins (same as in "bindDecoding_08")), and the "dispersion" (characterizes how spread out in space the event is).  I select replays that have a minimum duration of 100 msec and a dispersion of > 12.
-    """
-    sess_ts = {1: (11365, 14408), 2: (18791, 21200), 3: (25742, 27802)}
-    start, stop = sess_ts[session]
-​
-    dataset = 'widloski_sess{}'.format(session)
-    session -= 1
-        
-    ### behavior
-    behaviour_file = datadir+'behavior.mat'
-    decoded_file = datadir+'binDecoding_08.mat'
-    clusters_file = datadir+'clusters.mat'
-    replay_file = datadir+'replayEvents.mat'
-​
-    behaviour = scipy.io.loadmat(behaviour_file)
-    decoded = h5py.File(decoded_file, 'r')
-    clusters = scipy.io.loadmat(clusters_file)
-    replay = scipy.io.loadmat(replay_file)
-​
-    timestamps = behaviour['positions'][:, 0]
-    inds = np.where((timestamps >= start) & (timestamps <= stop))[0]
-​
-    timestamps = behaviour['positions'][inds , 0]
-    x = behaviour['positions'][inds , 1]
-    y = behaviour['positions'][inds , 2]
-    s = behaviour['positions'][inds , 3]
-    hd = np.unwrap(behaviour['positions'][inds , 4]) #unwrap hd
-    
-    ### spikes
-    num_clusters = clusters['clusters'].shape[1]
-    
-    fieldnames = clusters['clusters'].dtype.names #fieldnames for struct
-    names = clusters['clusters'][0,0][3].dtype.names #properties in '3'
-​
-    activity_type = []
-    properties = []
-    spktimes = []
-    for c in range(num_clusters):
-        activity_type.append(clusters['clusters'][0, c][0][-1, 0][0])
-​
-        values = [v[0, 0] for v in clusters['clusters'][0, c][3][0, 0].item()]
-        properties.append(dict(zip(names, values)))
-​
-        spktimes.append(clusters['clusters'][0, c][5][:, 0])
-    
-    
-    ### replay
-    replay = replay['decoder_replay'][0, session][0]
-    replay_names = replay.dtype.names
-    num_replays = replay.shape[1]
-​
-    replay_dicts = []
-    for r in range(num_replays):
-        values = list(replay[0, r].item())
-        replay_dicts.append(dict(zip(replay_names, values)))
-​
-    ### decoded
-    decnames = list(decoded['decoder_binDecoding'])
-    dec_pointers = [decoded['decoder_binDecoding'][name][session,0] for name in decnames]
-    dec_data = [decoded[pointer][...] for pointer in dec_pointers]
-    dec_dict = dict(zip(decnames, dec_data))
-    dec_dict['timeBins'] = np.mean(dec_dict['timeBins'], axis = 0) #center of each 80ms bin
-​
-    ### resample ###
-    time_fine = dec_dict['timeBins'] #resample at decoded resolution
-    x, y, s, hd = [interpolate(timestamps, data, time_fine) for data in [x, y, s, hd]]
-​
-    #bins = np.concatenate([time_fine-tbin/2, time_fine[-1:]+tbin/2]) #bin edges
-    #peth = np.array([np.histogram(spktimes[c], bins = bins)[0] for c in range(num_clusters)])
-    
-    data = {'ts': time_fine, 'x': x, 'y': y, 's': s, 'hd': hd, 'decoding': dec_dict,
-            'replays': replay_dicts, 'properties': properties, 'spktimes': spktimes}
-​
-    savef = savedir + dataset + '.p'
-    pickle.dump(data, open(savef, 'wb'), pickle.HIGHEST_PROTOCOL)
 
 
 

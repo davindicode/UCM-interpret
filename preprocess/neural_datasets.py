@@ -782,7 +782,7 @@ def peyrache_th1(datadir, mouse_id, session_id, savefile, channels, phase, inter
     top_y = 460.
     
     :param tuple channel_tuple: tuple indicating channels belonging to neuron type (channels, neuron_type)
-    :param bool remove_invalid: indicates whether to remove invalid data segments or interpolate
+    :param bool remove_invalid: indicates whethercd .. to remove invalid data segments or interpolate
     
     References:
     
@@ -929,7 +929,8 @@ def peyrache_th1(datadir, mouse_id, session_id, savefile, channels, phase, inter
         dhd = np.concatenate((hd_beh[1:]-hd_beh[:-1], [0]))
         dhd[dhd > np.pi] -= 2*np.pi # geodesic
         dhd[dhd < -np.pi] += 2*np.pi
-        ind = np.floor(np.arange(use_samples)*sample_bin/behav_tbin).astype(int)
+        ind = np.floor(np.arange(use_samples) * sample_bin/behav_tbin).astype(int)
+        ind = ind[ind < x_beh.shape[0]]
         ind_change = np.where((ind[1:]-ind[:-1]) == 1)[0]
         ind_change = np.concatenate(([0], ind_change))
         step_sizes = ind_change[1:]-ind_change[:-1]+1

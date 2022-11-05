@@ -208,6 +208,8 @@ class peyrache_th1(_dataset):
         left_T_sb = int(np.ceil(left_T/sample_bin))
         right_T_sb = int(np.floor(right_T/sample_bin))
         synch_times = np.arange(left_T_sb, right_T_sb+1, 1) * sample_bin
+        if synch_times[-1] >= use_times[-1]:  # remove right edge for interpolator range
+            synch_times = synch_times[:-1]
         use_sample_num = len(synch_times)  # maximum number of sample bins for spike train lengths
         
         
@@ -299,6 +301,8 @@ class peyrache_th1(_dataset):
         y_t = self.interpolator(use_times, y_beh)(synch_times)
         hd_t = self.interpolator(use_times, np.unwrap(hd_beh))(synch_times)
 
+        print(synch_times)
+        print(use_times)
         hd_invalids = self.interpolator(use_times, hd_nan.astype(float), kind='nearest')(synch_times)
         xy_invalids = self.interpolator(use_times, xy_nan.astype(float), kind='nearest')(synch_times)
         

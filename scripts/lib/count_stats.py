@@ -8,7 +8,6 @@ import matplotlib.pyplot as plt
 
 import sys
 sys.path.append("../../neuroppl/")
-sys.path.append("..")
 
 import neuroprob as nprb
 from neuroprob import utils

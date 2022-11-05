@@ -301,8 +301,6 @@ class peyrache_th1(_dataset):
         y_t = self.interpolator(use_times, y_beh)(synch_times)
         hd_t = self.interpolator(use_times, np.unwrap(hd_beh))(synch_times)
 
-        print(synch_times)
-        print(use_times)
         hd_invalids = self.interpolator(use_times, hd_nan.astype(float), kind='nearest')(synch_times)
         xy_invalids = self.interpolator(use_times, xy_nan.astype(float), kind='nearest')(synch_times)
         

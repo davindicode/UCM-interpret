@@ -28,7 +28,8 @@ def get_dataset(mouse_id, session_id, phase, subset, bin_size, single_spikes, pa
     y_t = data['y_t']
     hd_t = data['hd_t']
     neuron_regions = data['neuron_regions']
-
+    print('units: ', spktrain.shape[0], ' hdc units: ', hdc_unit.sum())
+    
     sample_bin = 0.001
 
     neurons = spktrain.shape[0]

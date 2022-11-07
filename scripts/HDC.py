@@ -18,18 +18,16 @@ import lib
 
 
 
+### data ###
+def get_dataset(mouse_id, session_id, phase, subset, bin_size, single_spikes, path):
 
-
-### data
-def get_dataset(session_id, phase, bin_size, single_spikes=False, path='../data/'):
-
-    data = np.load(path + 'Mouse{}_{}.npz'.format(session_id, phase))
+    data = np.load(path + '{}_{}_{}.npz'.format(mouse_id, session_id, phase))
     spktrain = data['spktrain']
+    hdc_unit = data['hdc_unit']
     x_t = data['x_t']
     y_t = data['y_t']
     hd_t = data['hd_t']
-    region_edge = data['region_edge']
-    #arena = data['arena']
+    neuron_regions = data['neuron_regions']
 
     sample_bin = 0.001
 
@@ -51,163 +49,169 @@ def get_dataset(session_id, phase, bin_size, single_spikes=False, path='../data/
     rs_t = np.concatenate((rs_t, rs_t[-1:]))
     rtime_t = np.arange(resamples)*tbin
 
-    units_used = rc_t.shape[0]
-    rcov = (utils.signal.WrapPi(rhd_t, True), rw_t, rs_t, rx_t, ry_t, rtime_t)
+    rcov = {
+        'hd': rhd_t % (2*np.pi), 
+        'omega': rw_t, 
+        'speed': rs_t, 
+        'x': rx_t, 
+        'y': ry_t, 
+        'time': rtime_t,
+    }
     
     if single_spikes is True:
         rc_t[rc_t > 1.] = 1.
-    
+        
+    if subset == 'hdc':
+        rc_t = rc_t[hdc_unit, :]
+    elif subset == 'nonhdc':
+        rc_t = rc_t[~hdc_unit, :]
+    elif subset != 'all':
+        raise ValueError('Invalid data subset')
+        
+    units_used = rc_t.shape[0]
     max_count = int(rc_t.max())
-    model_name = 'HDC{}{}_'.format(session_id, phase)
-    metainfo = (region_edge,)
-    return rcov, units_used, tbin, resamples, rc_t, max_count, bin_size, metainfo, model_name
-
-
-
-
-
-### model
-def inputs_used(x_mode, z_mode, cov_tuple, batch_info, tensor_type):
-    """
-    Create the used covariates list.
-    """
-    timesamples = cov_tuple[0].shape[0]
-    b = [torch.from_numpy(b) for b in cov_tuple]
-    hd_t, w_t, s_t, x_t, y_t, time_t = b
     
-    # x
-    if x_mode == 'hd-w-s-pos-t':
-        input_data = [hd_t, w_t, s_t, x_t, y_t, time_t]
-
-    elif x_mode == '':
-        input_data = []
-        
-    else:
-        raise ValueError
-        
-    d_x = len(input_data)
+    name = 'th1-{}-{}-{}-{}'.format(mouse_id, session_id, phase, subset)
+    metainfo = {
+        'neuron_regions': neuron_regions,
+    }
     
-    latents, d_z = lib.helper.latent_objects(z_mode, d_x, timesamples, tensor_type)
-    input_data += latents
-    return input_data, d_x, d_z
+    dataset_dict = {
+        'name': name,
+        'covariates': rcov, 
+        'spiketrains': rc_t, 
+        'neurons': units_used, 
+        'metainfo': metainfo,
+        'tbin': tbin,
+        'timesamples': resamples,
+        'max_count': max_count,
+        'bin_size': bin_size, 
+    }
+    return dataset_dict
 
 
 
-def enc_used(map_mode, ll_mode, x_mode, z_mode, cov_tuple, in_dims, inner_dims, jitter, tensor_type):
+### model ###
+def enc_used(model_dict, covariates, learn_mean):
     """
     """
-    def kernel_used(x_mode, z_mode, cov_tuple, num_induc, out_dims, var, tensor_type):
+    ll_mode, map_mode, x_mode, z_mode = model_dict['ll_mode'], model_dict['map_mode'], \
+        model_dict['x_mode'], model_dict['z_mode']
+    jitter, tensor_type = model_dict['jitter'], model_dict['tensor_type']
+    neurons, in_dims = model_dict['neurons'], model_dict['map_xdims'] + model_dict['map_zdims']
+    
+    out_dims = model_dict['map_outdims']
+    mean = torch.zeros((out_dims)) if learn_mean else 0  # not learnable vs learnable
+    
+    map_mode_comps = map_mode.split('-')
+    x_mode_comps = x_mode.split('-')
+    
+    def get_inducing_locs_and_ls(comp):
+        if comp == 'hd':
+            locs = np.linspace(0, 2*np.pi, num_induc+1)[:-1]
+            ls = 5.*np.ones(out_dims)
+        elif comp == 'omega':
+            scale = covariates['omega'].std()
+            locs = scale * np.random.randn(num_induc)
+            ls = scale * np.ones(out_dims)
+        elif comp == 'speed':
+            scale = covariates['speed'].std()
+            locs = np.random.uniform(0, scale, size=(num_induc,))
+            ls = 10.*np.ones(out_dims)
+        elif comp == 'x':
+            left_x = covariates['x'].min()
+            right_x = covariates['x'].max()
+            locs = np.random.uniform(left_x, right_x, size=(num_induc,))
+            ls = (right_x - left_x)/10. * np.ones(out_dims)
+        elif comp == 'y':
+            bottom_y = covariates['y'].min()
+            top_y = covariates['y'].max()
+            locs = np.random.uniform(bottom_y, top_y, size=(num_induc,))
+            ls = (top_y - bottom_y)/10. * np.ones(out_dims)
+        elif comp == 'time':
+            scale = covariates['time'].max()
+            locs = np.linspace(0, scale, num_induc)
+            ls = scale/2. * np.ones(out_dims)
+        else:
+            raise ValueError('Invalid covariate type')
+            
+        return locs, ls, (comp == 'hd')
+    
+    
+    if map_mode_comps[0] == 'svgp':
+        num_induc = int(map_mode_comps[1])
 
-        hd_t, w_t, s_t, x_t, y_t, time_t = cov_tuple
-
-
-        left_x = x_t.min()
-        right_x = x_t.max()
-        bottom_y = y_t.min()
-        top_y = y_t.max()
-
+        var = 1.0 # initial kernel variance
         v = var*torch.ones(out_dims)
 
-        l = 10.*np.ones(out_dims)
-        l_ang = 5.*np.ones(out_dims)
-        l_s = 10.*np.ones(out_dims)
-        l_time = time_t.max()/2.*np.ones(out_dims)
-        l_one = np.ones(out_dims)
-        l_w = w_t.std()*np.ones(out_dims)
-
+        ind_list = []
+        kernel_tuples = [('variance', v)]
+        ang_ls, euclid_ls = [], []
+        
         # x
-        if x_mode == 'hd-w-s-pos-t':
-            ind_list = [np.linspace(0, 2*np.pi, num_induc+1)[:-1], 
-                        np.random.randn(num_induc)*w_t.std(), 
-                        np.random.uniform(0, s_t.std(), size=(num_induc,)), 
-                        np.random.uniform(left_x, right_x, size=(num_induc,)), 
-                        np.random.uniform(bottom_y, top_y, size=(num_induc,)), 
-                        np.linspace(0, time_t.max(), num_induc)]
-            kernel_tuples = [('variance', v), 
-                  ('SE', 'torus', torch.tensor([l_ang])), 
-                  ('SE', 'euclid', torch.tensor([l_w, l_s, l, l, l_time]))]
-
-        elif x_mode == '':
-            ind_list = []
-            kernel_tuples = [('variance', v)]
-
-        else:
-            raise ValueError
+        for xc in x_mode_comps:
+            if xc == '':
+                continue
+                
+            locs, ls, angular = get_inducing_locs_and_ls(xc)
+            
+            ind_list += [locs]
+            if angular:
+                ang_ls += [ls]
+            else:
+                euclid_ls += [ls]
+            
+        if len(ang_ls) > 0:
+            kernel_tuples += [('SE', 'torus', torch.tensor(ang_ls))]
+        if len(euclid_ls) > 0:
+            kernel_tuples += [('SE', 'euclid', torch.tensor(euclid_ls))]
 
         # z
-        latent_k, latent_u = lib.helper.latent_kernel(z_mode, num_induc, out_dims)
+        latent_k, latent_u = lib.models.latent_kernel(z_mode, num_induc, out_dims)
         kernel_tuples += latent_k
         ind_list += latent_u
 
         # objects
-        kernelobj, constraints = lib.helper.create_kernel(kernel_tuples, 'exp', tensor_type)
+        kernelobj, constraints = lib.models.create_kernel(kernel_tuples, 'exp', tensor_type)
 
         Xu = torch.tensor(ind_list).T[None, ...].repeat(out_dims, 1, 1)
         inpd = Xu.shape[-1]
         inducing_points = nprb.kernels.kernel.inducing_points(out_dims, Xu, constraints, 
                                                               tensor_type=tensor_type)
 
-        return kernelobj, inducing_points
-    
-
-    if map_mode[:4] == 'svgp':
-        num_induc = int(map_mode[4:])
-
-        mean = 0 if ll_mode == 'U' else torch.zeros((inner_dims)) # not learnable vs learnable
-        learn_mean = (ll_mode != 'U')
-
-        var = 1.0 # initial kernel variance
-        kernelobj, inducing_points = kernel_used(x_mode, z_mode, cov_tuple, num_induc, 
-                                                  inner_dims, var, tensor_type)
-
         mapping = nprb.mappings.SVGP(
-            in_dims, inner_dims, kernelobj, inducing_points=inducing_points, 
+            in_dims, out_dims, kernelobj, inducing_points=inducing_points, 
             jitter=jitter, whiten=True, 
             mean=mean, learn_mean=learn_mean, 
             tensor_type=tensor_type
         )
-    
-        # heteroscedastic likelihoods
-        if ll_mode[0] == 'h':
-            kernelobj, inducing_points = kernel_used(x_mode, z_mode, cov_tuple, num_induc, 
-                                                      inner_dims, var, tensor_type)
-            
-            hgp = nprb.mappings.SVGP(
-                in_dims, inner_dims, kernelobj, inducing_points=inducing_points, 
-                jitter=jitter, whiten=True, 
-                mean=torch.zeros((inner_dims)), learn_mean=True, 
-                tensor_type=tensor_type
-            )
-            
-        else:
-            hgp = None
         
     else:
         raise ValueError
         
-    return mapping, hgp
-    
-
-    
-    
-
-    
+    return mapping
 
 
-### main
+
+### main ###
 def main():
     parser = lib.models.standard_parser("%(prog)s [OPTION] [FILE]...", "Fit model to data.")
+    parser.add_argument('--data_path', action='store', type=str)
+    parser.add_argument('--checkpoint_dir', default='./checkpoint/', action='store', type=str)
+    
+    parser.add_argument('--mouse_id', action='store', type=str)
     parser.add_argument('--session_id', action='store', type=str)
-    parser.add_argument('--phase', action='store', type=str)
+    parser.add_argument('--phase', action='store', type=str)  # 'sleep', 'wake'
+    parser.add_argument('--subset', action='store', type=str)  # 'hdc', 'nonhdc', 'all'
     args = parser.parse_args()
     
     dev = utils.pytorch.get_device(gpu=args.gpu)
     
-    session_id = args.session_id# = ['12-120806', '28-140313']
-    phase = args.phase#= ['sleep', 'wake']
-    dataset_tuple = get_dataset(session_id, phase, args.bin_size, args.single_spikes)
+    mouse_id, session_id, phase, subset = args.mouse_id, args.session_id, args.phase, args.subset
+    dataset_dict = get_dataset(mouse_id, session_id, phase, subset, 
+                               args.bin_size, args.single_spikes, args.data_path)
 
-    lib.models.training(dev, args, dataset_tuple, inputs_used, enc_used)
+    lib.models.train_model(dev, args, dataset_dict, enc_used, args.checkpoint_dir)
 
                 
 

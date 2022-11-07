@@ -1,27 +1,25 @@
 import numpy as np
 
-from .signal import ConsecutiveArrays, TrueIslands, WrapPi
-
 import torch
 import torch.nn.functional as F
 
 
 
 # spike train tools
-def bin_data(bin_size, bin_time, spiketimes, track_samples, behaviour_data=None, average_behav=True, binned=False):
+def bin_data(bin_size, bin_time, spiketimes, timesamples, behaviour_data=None, average_behav=True, binned=False):
     """
     Bin the spike train into a given bin size.
     
     :param int bin_size: desired binning of original time steps into new bin
     :param float bin_time: time step of each original bin or time point
     :param np.array spiketimes: input spikes in train or index format
-    :param int track_samples: number of time steps in the recording
+    :param int timesamples: number of time steps in the recording
     :param tuple behaviour_data: input behavioural time series
     :param bool average_behav: takes the middle element in bins for behavioural data if False
     :param bool binned: spiketimes is a spike train is True, otherwise it is spike time indices
     """
     tbin = bin_size*bin_time
-    resamples = int(np.floor(track_samples/bin_size))
+    resamples = int(np.floor(timesamples/bin_size))
     centre = bin_size // 2
     # leave out data with full bins
     
@@ -109,10 +107,13 @@ def compute_ISI_LV(sample_bin, spiketimes):
         
     
     
-def spiketrials_CV(folds, spiketrain, track_samples, behaviour_list, trial_sizes):
+def spiketrials_CV(folds, spiketrain, timesamples, behaviour_dict, trial_sizes):
     """
     """
-    if behaviour_list is not None:
+    if behaviour_dict is not None:
+        behaviour_names = list(behaviour_dict.keys())
+        behaviour_list = list(behaviour_dict.values())
+        
         behav_format = len(behaviour_list[0].shape)
         if behav_format == 1:
             behav = np.array(behaviour_list) # dims, timesteps
@@ -121,8 +122,8 @@ def spiketrials_CV(folds, spiketrain, track_samples, behaviour_list, trial_sizes
         else:
             raise ValueError
             
-    if behav.shape[1] != track_samples:
-        raise ValueError('Inconsistent behaviour array length')
+        if behav.shape[1] != timesamples:
+            raise ValueError('Inconsistent behaviour array length')
         
     trial_cnt = len(trial_sizes)
     fold_cnt = trial_cnt // folds
@@ -148,7 +149,7 @@ def spiketrials_CV(folds, spiketrain, track_samples, behaviour_list, trial_sizes
     cur = 0
     for trsz in trial_sizes:
         blocks_t.append(spiketrain[..., cur:cur+trsz])
-        if behaviour_list is not None:
+        if behaviour_dict is not None:
             blocks_c.append(behav[:, cur:cur+trsz])
         cur += trsz
         
@@ -158,7 +159,7 @@ def spiketrials_CV(folds, spiketrain, track_samples, behaviour_list, trial_sizes
         ftrain = np.concatenate(tuple(blocks_t[ind] for ind in ftr_inds), axis=-1)
         vtrain = np.concatenate(tuple(blocks_t[ind] for ind in vtr_inds), axis=-1)
         
-        if behaviour_list is not None:
+        if behaviour_dict is not None:
             fcov_t = np.concatenate(tuple(blocks_c[ind] for ind in ftr_inds), axis=1)
             vcov_t = np.concatenate(tuple(blocks_c[ind] for ind in vtr_inds), axis=1)
             
@@ -168,6 +169,9 @@ def spiketrials_CV(folds, spiketrain, track_samples, behaviour_list, trial_sizes
             elif behav_format == 1:
                 fcov_t = list(fcov_t)
                 vcov_t = list(vcov_t)
+                
+            fcov_t = {n: v for n, v in zip(behaviour_names, fcov_t)}
+            vcov_t = {n: v for n, v in zip(behaviour_names, vcov_t)}
                 
         else:
             fcov_t = None
@@ -179,7 +183,7 @@ def spiketrials_CV(folds, spiketrain, track_samples, behaviour_list, trial_sizes
 
     
 
-def spiketrain_CV(folds, spiketrain, track_samples, behaviour_list=None, spk_hist_len=0):
+def spiketrain_CV(folds, spiketrain, timesamples, behaviour_dict=None, spk_hist_len=0):
     """
     Creates subsets of the the neural data (behaviour plus spike trains) and splits it 
     into folds cross-validation sets with validation data and test data as one out of the 
@@ -188,12 +192,15 @@ def spiketrain_CV(folds, spiketrain, track_samples, behaviour_list=None, spk_his
     
     :param int folds: number of cross-validation segments to split into
     :param np.array spiketrain: spike train of shape (trials, neuron, timestep) or (neuron, time)
-    :param int track_samples: time steps of recording
+    :param int timesamples: time steps of recording
     :param list behaviour_list: list of covariate time series
     :returns: cross-validation set as tuple
     :rtype: tuple
     """
-    if behaviour_list is not None:
+    if behaviour_dict is not None:
+        behaviour_names = list(behaviour_dict.keys())
+        behaviour_list = list(behaviour_dict.values())
+    
         behav_format = len(behaviour_list[0].shape)
         if behav_format == 1:
             behav = np.array(behaviour_list) # dims, timesteps
@@ -202,12 +209,14 @@ def spiketrain_CV(folds, spiketrain, track_samples, behaviour_list=None, spk_his
         else:
             raise ValueError
             
-    if spiketrain.shape[-1]-spk_hist_len != track_samples:
+        if behav.shape[1] != timesamples:
+            raise ValueError('Inconsistent behaviour array length')
+            
+    if spiketrain.shape[-1]-spk_hist_len != timesamples:
         raise ValueError('Inconsistent spike train length')
-    if behav.shape[1] != track_samples:
-        raise ValueError('Inconsistent behaviour array length')
+    
         
-    df = track_samples // folds
+    df = timesamples // folds
     cv_set = []
     valset_start = []
     
@@ -217,7 +226,7 @@ def spiketrain_CV(folds, spiketrain, track_samples, behaviour_list=None, spk_his
     for f in range(folds):
         valset_start.append(df*f)
         blocks_t.append(spiketrain[..., df*f+spk_hist_len:df*(f+1)+spk_hist_len])
-        if behaviour_list is not None:
+        if behaviour_dict is not None:
             blocks_c.append(behav[:, df*f:df*(f+1)])
 
     for f in range(folds):
@@ -231,7 +240,7 @@ def spiketrain_CV(folds, spiketrain, track_samples, behaviour_list=None, spk_his
             vtrain = np.concatenate(
                 (spiketrain[..., df*f:df*f+spk_hist_len], vtrain), axis=-1)
         
-        if behaviour_list is not None:
+        if behaviour_dict is not None:
             fcov_t = np.concatenate(tuple(blocks_c[f_] for f_ in fb), axis=1)
             
             if behav_format == 3:
@@ -240,6 +249,9 @@ def spiketrain_CV(folds, spiketrain, track_samples, behaviour_list=None, spk_his
             elif behav_format == 1:
                 fcov_t = list(fcov_t)
                 vcov_t = list(blocks_c[f])
+                
+            fcov_t = {n: v for n, v in zip(behaviour_names, fcov_t)}
+            vcov_t = {n: v for n, v in zip(behaviour_names, vcov_t)}
                 
         else:
             fcov_t = None
@@ -271,9 +283,9 @@ def batch_segments(segment_lengths, trial_ids, batch_size):
             
         n = int(np.ceil(s / batch_size))-1
         for n_ in range(n):
-            batch_info.append((batch_size, True if n_ > 0 else False, batch_initial))
+            batch_info.append({'size': batch_size, 'linked': True if n_ > 0 else False, 'initial': batch_initial})
             batch_initial = False
-        batch_info.append((s - n*batch_size, True if n > 0 else False, batch_initial))
+        batch_info.append({'size': s - n*batch_size, 'linked': True if n > 0 else False, 'initial': batch_initial})
         batch_initial = False
         
     return batch_info
@@ -418,7 +430,7 @@ def var_var_MI(sample_bin, v1_t, v2_t, v1_bin, v2_bin):
     # Dirichlet prior on the empirical variable probabilites TODO? Bayesian point estimate
 
     # binning
-    track_samples = len(v1_t)
+    timesamples = len(v1_t)
     v1_bins = len(v1_bin)-1
     v2_bins = len(v2_bin)-1
     bv_1 = np.digitize(v1_t, v1_bin)-1
@@ -426,7 +438,7 @@ def var_var_MI(sample_bin, v1_t, v2_t, v1_bin, v2_bin):
 
     # get empirical probability distributions
     p_12 = np.zeros((v1_bins, v2_bins))
-    np.add.at(p_12, (bv_1, bv_2), 1./track_samples)
+    np.add.at(p_12, (bv_1, bv_2), 1./timesamples)
 
     logterm = p_12/(p_12.sum(0, keepdims=True)*p_12.sum(1, keepdims=True) + 1e-12)
     logterm[logterm == 0] = 1.0
@@ -555,7 +567,7 @@ def geometric_tuning(ori_rate, smth_rate, prob):
     # Computes the sparsity of the tuning
     sparsity = np.empty(units)
     for u in range(units):
-        sparsity[u] = 1-(prob * ori_rate[u]).sum()**2 / (prob * ori_rate[u]**2).sum()
+        sparsity[u] = 1-(prob * ori_rate[u]).sum()**2 / np.maximum(1e-10, (prob * ori_rate[u]**2).sum())
         
     return coherence, sparsity
         

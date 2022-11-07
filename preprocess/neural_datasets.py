@@ -165,16 +165,10 @@ class peyrache_th1(_dataset):
 
     def load_preprocess_save(self, savefile, time_limits):
         """
-        In “pos” and “ang” files, -1 values indicate that LED detection failed. 
         time of the first video frame was randomly misaligned by 0–60 ms 
 
         The behaviour is recorded at a different frequency, resample to get it at the same frequency as 
-        spike recordings.
-
-        left_x = 0. # mm
-        right_x = 530.
-        bottom_y = 0.
-        top_y = 460.
+        spike recordings. Note folder "PosFiles" and "AngFiles" are the same data
 
         :param bool interpolate_invalid: indicates whether to remove invalid data segments or interpolate
         """
@@ -182,13 +176,13 @@ class peyrache_th1(_dataset):
         electrode_groups = self.electrode_groups
         ext_name = mouse_id+"-"+session_id
         
-        # PosFiles, AngFiles are the same data
+        # -1 values indicate that LED detection failed in ang, NaN values present in XY data
         f_ang = open(datadir+"PositionFiles/"+mouse_id+"/"+ext_name+"/"+ext_name+".ang", "r").read()
         f_pos = open(datadir+"PositionFiles/"+mouse_id+"/"+ext_name+"/"+ext_name+".pos", "r").read()
         
         l = f_pos.split(sep='\n')[:-1]
         pos = np.array([i.split('\t') for i in l]).astype(np.float)
-
+        
         l = f_ang.split(sep='\n')[:-1]
         ang = np.array([i.split('\t') for i in l]).astype(np.float)
         
@@ -279,6 +273,7 @@ class peyrache_th1(_dataset):
             'spike_time_inds': use_t_spike, 
             'refract_viol': refract_viol,
             'electrode_groups': electrode_groups,
+            'neuron_groups': neuron_groups,
         }
             
             
@@ -287,7 +282,7 @@ class peyrache_th1(_dataset):
         hd_beh = ang[window, 1]
 
         # interpolator for invalid points
-        hd_nan = (hd_beh != hd_beh)
+        hd_nan = (hd_beh == -1.)
         invalids = self.true_subarrays(hd_nan)
         self.stitch_nans(hd_beh, invalids, angular=True)
         

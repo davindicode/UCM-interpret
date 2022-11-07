@@ -15,15 +15,149 @@ sys.path.append("..")
 
 import neuroprob as nprb
 from neuroprob import utils
-
-from . import helper
-
+from neuroprob import kernels
 
 
 
+### GP ###
+def create_kernel(kernel_tuples, kern_f, tensor_type):
+    """
+    Helper function for creating kernel triplet tuple
+    """
+    track_dims = 0
+    kernelobj = 0
+
+    constraints = []
+    for k, k_tuple in enumerate(kernel_tuples):
+
+        if k_tuple[0] is not None:
+
+            if k_tuple[0] == 'variance':
+                krn = kernels.kernel.Constant(variance=k_tuple[1], tensor_type=tensor_type)
+
+            else:
+                kernel_type = k_tuple[0]
+                topology = k_tuple[1]
+                lengthscales = k_tuple[2]
+
+                if topology == 'sphere':
+                    constraints += [(track_dims, track_dims+len(lengthscales), 'sphere'),]
+
+                act = []
+                for _ in lengthscales:
+                    act += [track_dims]
+                    track_dims += 1
+
+                if kernel_type == 'SE':
+                    krn = kernels.kernel.SquaredExponential(
+                        input_dims=len(lengthscales), lengthscale=lengthscales, \
+                        track_dims=act, topology=topology, f=kern_f, \
+                        tensor_type=tensor_type
+                    )
+                    
+                elif kernel_type == 'DSE':
+                    if topology != 'euclid':
+                        raise ValueError('Topology must be euclid')
+                    lengthscale_beta = k_tuple[3]
+                    beta = k_tuple[4]
+                    krn = kernels.kernel.DSE(
+                        input_dims=len(lengthscales), \
+                        lengthscale=lengthscales, \
+                        lengthscale_beta=lengthscale_beta, \
+                        beta=beta, \
+                        track_dims=act, f=kern_f, \
+                        tensor_type=tensor_type
+                    )
+                    
+                elif kernel_type == 'OU':
+                    krn = kernels.kernel.Exponential(
+                        input_dims=len(lengthscales), \
+                        lengthscale=lengthscales, \
+                        track_dims=act, topology=topology, f=kern_f, \
+                        tensor_type=tensor_type
+                    )
+                    
+                elif kernel_type == 'RQ':
+                    scale_mixture = k_tuple[3]
+                    krn = kernels.kernel.RationalQuadratic(
+                        input_dims=len(lengthscales), \
+                        lengthscale=lengthscales, \
+                        scale_mixture=scale_mixture, \
+                        track_dims=act, topology=topology, f=kern_f, \
+                        tensor_type=tensor_type
+                    )
+                    
+                elif kernel_type == 'Matern32':
+                    krn = kernels.kernel.Matern32(
+                        input_dims=len(lengthscales), \
+                        lengthscale=lengthscales, \
+                        track_dims=act, topology=topology, f=kern_f, \
+                        tensor_type=tensor_type
+                    )
+                    
+                elif kernel_type == 'Matern52':
+                    krn = kernels.kernel.Matern52(
+                        input_dims=len(lengthscales), \
+                        lengthscale=lengthscales, \
+                        track_dims=act, topology=topology, f=kern_f, \
+                        tensor_type=tensor_type
+                    )
+                    
+                elif kernel_type == 'linear':
+                    if topology != 'euclid':
+                        raise ValueError('Topology must be euclid')
+                    krn = kernels.kernel.Linear(
+                        input_dims=len(lengthscales), \
+                        track_dims=act, f=kern_f
+                    )
+                    
+                elif kernel_type == 'polynomial':
+                    if topology != 'euclid':
+                        raise ValueError('Topology must be euclid')
+                    degree = k_tuple[3]
+                    krn = kernels.kernel.Polynomial(
+                        input_dims=len(lengthscales), \
+                        bias=lengthscales, \
+                        degree=degree, track_dims=act, f=kern_f, \
+                        tensor_type=tensor_type
+                    )
+                    
+                else:
+                    raise NotImplementedError('Kernel type is not supported.')
+
+            kernelobj = kernels.kernel.Product(kernelobj, krn) if kernelobj != 0 else krn
+
+        else:
+            track_dims += 1
+
+    return kernelobj, constraints
 
 
-### component functions ###
+
+def latent_kernel(z_mode, num_induc, out_dims):
+    """
+    """
+    z_mode_comps = z_mode.split('-')
+    
+    ind_list = []
+    kernel_tuples = []
+    
+    l_one = np.ones(out_dims)
+    
+    for zc in z_mode_comps:
+        if zc[:1] == 'R':
+            dz = int(zc[1:]) 
+            for h in range(dz):
+                ind_list += [np.random.randn(num_induc)]
+            kernel_tuples += [('SE', 'euclid', torch.tensor([l_one]*dz))]
+
+        elif zc != '':
+            raise ValueError('Invalid latent covariate type')
+        
+    return kernel_tuples, ind_list
+
+
+### model components ###
 def get_basis(basis_mode='ew'):
     
     if basis_mode == 'id':
@@ -80,193 +214,132 @@ class net(nn.Module):
         input = torch.cat([f_(input) for f_ in self.basis], dim=-1)
         out = self.mnet(input, neuron)
         return out.view(out.shape[0], -1) # t, NxK
-    
-    
-    
 
 
-    
 
-### model components ###
-def temporal_GP(resamples, tbin, batch_info, num_induc, out_dims, tensor_type, ini_var=1., ini_l=1.):
+def latent_objects(z_mode, d_x, timesamples, tensor_type):
     """
-    Temporal GP prior
     """
-    out_dims = 1
-    in_dims = 1
-    Xu = torch.linspace(0, resamples*tbin, num_induc)[None, :, None].repeat(in_dims, 1, 1)
+    z_mode_comps = z_mode.split('-')
     
-    v = ini_var*torch.ones(1, out_dims)
-    l = ini_l*torch.ones(out_dims)
-    krn1 = kernels.kernel.Constant(variance=v, tensor_type=tensor_type)
-    krn2 = kernels.kernel.SquaredExponential(
-        input_dims=len(l), lengthscale=l, \
-        track_dims=[0], topology='euclid', f='exp', \
-        tensor_type=tensor_type
-    )
-    kernelobj = kernels.kernel.Product(krn1, krn2)
-    inducing_points = kernels.kernel.inducing_points(out_dims, Xu, constraints=[])
+    tot_d_z, latents = 0, []
+    for zc in z_mode_comps:
+        d_z = 0
         
-    gp = nprb.mappings.SVGP(
-        in_dims, out_dims, kernelobj, inducing_points=inducing_points, 
-        whiten=True, jitter=1e-5, mean=torch.zeros(out_dims), learn_mean=True
-    )
-        
-    times_input = torch.arange(resamples)*tbin
-    input_group = nprb.inference.input_group()
-    input_group.set_XZ([times_input], resamples, batch_info=batch_info)
-    
-    return nprb.inference.probabilistic_mapping(input_group, gp)
+        if zc[:1] == 'R':
+            d_z = int(zc[1:])
 
-    
-    
-def coupling_filter(filt_mode, tbin, neurons, hist_len, tensor_type):
-    """
-    Create the spike coupling object.
-    
-    if spkcoupling_mode[:2] == 'gp':
-        l0, l_b0, beta0, l_mean0, num_induc = filter_props
-        if spkcoupling_mode[2:6] == 'full':
-            D = neurons*neurons
-        else:
-            D = neurons
-        l_t = l0*np.ones((1, D))
-        l_b = l_b0*np.ones((1, D))
-        beta = beta0*np.ones((1, D))
-        filter_kernel = [('DSE', 'euclid', l_t, l_b, beta)]
-        mean_func = nprb.likelihoods.filters.decaying_exponential(D, 0., l_mean0)
-        filter_data = (hist_len, filter_kernel)
-        
-        #    if filter_data is not None: # add filter time dimension
-        filter_len, filter_kernel = filter_data
-        max_time = filter_len*tbin
-        ind_list = [np.linspace(0, max_time, num_induc)] + ind_list
-        temp = []
-        for k in kernel_tuples_:
-            temp.append(k[:1] + filter_kernel + k[1:])
-        kernel_tuples_ = temp
-        
-        
-    if spkcoupling_mode == 'rcbselfh' or spkcoupling_mode == 'rcbselfhc':
-        mean_func = np.zeros(B*neurons)
-        fm = GP_params(mode, behav_tuple, num_induc, B*neurons, 'identity', tbin, jitter, mean_func, 
-                       None, cov_type=None, shared_kernel_params=(spkcoupling_mode[-1]=='c'), var=ini_var)
-        
-        hist_couple = nprb.likelihoods.filters.hetero_raised_cosine_bumps(a=a, c=c, phi=phi_h, timesteps=hist_len, 
-                                                             inner_loop_bs=1000, hetero_model=fm, 
-                                                             learnable=[False, False, False])
-    elif spkcoupling_mode == 'rcbfullh' or spkcoupling_mode == 'rcbfullhc':
-        mean_func = np.zeros(B*neurons*neurons)
-        fm = GP_params(mode, behav_tuple, num_induc, B*neurons*neurons, 'identity', tbin, jitter, mean_func, 
-                       None, cov_type=None, shared_kernel_params=(spkcoupling_mode[-1]=='c'), var=ini_var)
-        
-        hist_couple = nprb.likelihoods.filters.hetero_raised_cosine_bumps(a=a, c=c, phi=phi_h, timesteps=hist_len, 
-                                                             hetero_model=fm, inner_loop_bs=100, 
-                                                             learnable=[False, False, False])
-                                                             
-    elif spkcoupling_mode == 'gpselfh' or spkcoupling_mode == 'gpselfhc':
-        fm = GP_params(mode, behav_tuple, num_induc, neurons, 'identity', tbin, jitter, mean_func, 
-                       filter_data, cov_type=None, shared_kernel_params=(spkcoupling_mode[-1]=='c'))
-        
-        hist_couple = nprb.likelihoods.filters.hetero_filter_model(1, neurons, hist_len, tbin, fm, 
-                                                      inner_loop_bs=100, tens_type=tensor_type)
-    elif spkcoupling_mode == 'gpfullh' or spkcoupling_mode == 'gpfullhc':
-        fm = GP_params(mode, behav_tuple, num_induc, neurons*neurons, 'identity', tbin, jitter, mean_func, 
-                       filter_data, cov_type=None, shared_kernel_params=(spkcoupling_mode[-1]=='c'))
-        
-        hist_couple = nprb.likelihoods.filters.hetero_filter_model(neurons, neurons, hist_len, tbin, fm, 
-                                                   inner_loop_bs=100, tens_type=tensor_type)
-    """
-    if filt_mode[4:8] == 'svgp':
-        num_induc = int(filt_mode[8:])
-        
-        if filt_mode[:4] == 'full':
-            D = neurons*neurons
-            out_dims = neurons
-        elif filt_mode[:4] == 'self':
-            D = neurons
-            out_dims = 1
+            if d_z == 1:
+                p = nprb.inputs.priors.AR1(
+                    torch.tensor(0.), torch.tensor(4.), 1, tensor_type=tensor_type)
+            else:
+                p = nprb.inputs.priors.AR1(
+                    torch.tensor([0.]*d_z), torch.tensor([4.]*d_z), d_z, tensor_type=tensor_type)
+
+            v = nprb.inputs.variational.IndNormal(
+                torch.rand(timesamples, d_z)*0.1, torch.ones((timesamples, d_z))*0.01, 
+                'euclid', d_z, tensor_type=tensor_type)
+
+            latents += [nprb.inference.prior_variational_pair(d_z, p, v)]
+
+        elif zc[:1] == 'T':
+            d_z = int(zc[1:])
+
+            if d_z == 1:
+                p = nprb.inputs.priors.dAR1(
+                    torch.tensor(0.), torch.tensor(4.0), 'torus', 1, tensor_type=tensor_type)
+            else:
+                p = nprb.inputs.priors.dAR1(
+                    torch.tensor([0.]*d_z), torch.tensor([4.]*d_z), 'torus', d_z, tensor_type=tensor_type)
+
+            v = nprb.inputs.variational.IndNormal(
+                torch.rand(timesamples, 1)*2*np.pi, torch.ones((timesamples, 1))*0.1, 
+                'torus', d_z, tensor_type=tensor_type)
+
+            latents += [nprb.inference.prior_variational_pair(_z, p, v)]
+
+        elif zc != '':
+            raise ValueError('Invalid latent covariate type')
             
-        v = 100*tbin*torch.ones(1, D)
-        l = 100.*tbin*torch.ones((1, D))
-        l_b = 100.*tbin*torch.ones((1, D))
-        beta = 1.*torch.ones((1, D))
-        
-        mean_func = nprb.kernels.means.decaying_exponential(D, 0., 100.*tbin)
+        tot_d_z += d_z
 
-        Xu = torch.linspace(0, hist_len*tbin, num_induc)[None, :, None].repeat(D, 1, 1)
+    return latents, tot_d_z
     
-        krn1 = nprb.kernels.kernel.Constant(variance=v, tensor_type=tensor_type)
-        krn2 = nprb.kernels.kernel.DSE(
-            input_dims=1, lengthscale=l, \
-            lengthscale_beta=l_b, beta=beta, \
-            track_dims=[0], f='exp', \
-            tensor_type=tensor_type
-        )
-        kernelobj = nprb.kernels.kernel.Product(krn1, krn2)
-        inducing_points = nprb.kernels.kernel.inducing_points(D, Xu, constraints=[], tensor_type=tensor_type)
-
-        gp = nprb.mappings.SVGP(
-            1, D, kernelobj, inducing_points=inducing_points, 
-            whiten=True, jitter=1e-5, mean=mean_func, learn_mean=True
-        )
-        
-        hist_couple = nprb.likelihoods.filters.filter_model(out_dims, neurons, hist_len+1, tbin, gp, tens_type=tensor_type)
-        
-        
-    elif filt_mode[4:7] == 'rcb':
-        strs = filt_mode[7:].split('-')
-        B, L, a, c = int(strs[0]), float(strs[1]), torch.tensor(float(strs[2])), torch.tensor(float(strs[3]))
-        
-        ini_var = 1.
-        if filt_mode[:4] == 'full':
-            phi_h = torch.linspace(0., L, B)[:, None, None].repeat(1, neurons, neurons)
-            w_h = np.sqrt(ini_var)*torch.randn(B, neurons, neurons)
-
-        elif filt_mode[:4] == 'self':
-            phi_h = torch.linspace(0., L, B)[:, None].repeat(1, neurons)
-            w_h = np.sqrt(ini_var)*torch.randn(B, neurons)
-            
-        hist_couple = nprb.likelihoods.filters.raised_cosine_bumps(a=a, c=c, phi=phi_h, w=w_h, timesteps=hist_len+1, 
-                                                                   learnable=[False, False, False, True], tensor_type=tensor_type)
-        
-    else:
-        raise ValueError
     
-    return hist_couple
+def inputs_used(model_dict, covariates, batch_info):
+    """
+    Create the used covariates list.
+    """
+    x_mode, z_mode, tensor_type = model_dict['x_mode'], model_dict['z_mode'], model_dict['tensor_type']
+    x_mode_comps = x_mode.split('-')
+    
+    input_data = []
+    for xc in x_mode_comps:
+        if xc == '':
+            continue
+        input_data.append(torch.from_numpy(covariates[xc]))
+        
+    d_x = len(input_data)
+    
+    timesamples = list(covariates.values())[0].shape[0]
+    latents, d_z = latent_objects(z_mode, d_x, timesamples, tensor_type)
+    input_data += latents
+    return input_data, d_x, d_z
+    
+    
 
-
-
-
-def get_likelihood(ll_mode, inner_dims, inv_link, tbin, J, cutoff, mapping_net, C, hgp, tensor_type):
+def get_likelihood(model_dict, enc_used):
     """
     Create the likelihood object.
-    """  
-    if ll_mode == 'IBP':
+    """
+    ll_mode, tensor_type = model_dict['ll_mode'], model_dict['tensor_type']
+    ll_mode_comps = ll_mode.split('-')
+    C = int(ll_mode_comps[2]) if ll_mode_comps[0] == 'U' else 1
+    
+    max_count, neurons, tbin = model_dict['max_count'], model_dict['neurons'], model_dict['tbin']
+    inner_dims = model_dict['map_outdims']
+    
+    if ll_mode[0] == 'h':
+        hgp = enc_used(model_dict, cov, learn_mean=False)
+    
+    if ll_mode_comps[0] == 'U':
+        inv_link = 'identity'
+    elif ll_mode == 'IBP':
+        inv_link = lambda x: torch.sigmoid(x)/tbin
+    elif ll_mode_comps[-1] == 'exp':
+        inv_link = 'exp'
+    elif ll_mode_comps[-1] == 'spl':
+        inv_link = 'softplus'
+    else:
+        raise ValueError('Likelihood inverse link function not defined')
+            
+    if ll_mode_comps[0] == 'IBP':
         likelihood = nprb.likelihoods.Bernoulli(tbin, inner_dims, tensor_type=tensor_type)
         
-    elif ll_mode == 'IP':
+    elif ll_mode_comps[0] == 'IP':
         likelihood = nprb.likelihoods.Poisson(tbin, inner_dims, inv_link, tensor_type=tensor_type)
         
-    elif ll_mode == 'ZIP':
+    elif ll_mode_comps[0] == 'ZIP':
         alpha = .1*torch.ones(inner_dims)
         likelihood = nprb.likelihoods.ZI_Poisson(tbin, inner_dims, inv_link, alpha, tensor_type=tensor_type)
         
-    elif ll_mode =='hZIP':
+    elif ll_mode_comps[0] =='hZIP':
         likelihood = nprb.likelihoods.hZI_Poisson(tbin, inner_dims, inv_link, hgp, tensor_type=tensor_type)
         
-    elif ll_mode == 'NB':
+    elif ll_mode_comps[0] == 'NB':
         r_inv = 10.*torch.ones(inner_dims)
         likelihood = nprb.likelihoods.Negative_binomial(tbin, inner_dims, inv_link, r_inv, tensor_type=tensor_type)
         
-    elif ll_mode =='hNB':
+    elif ll_mode_comps[0] =='hNB':
         likelihood = nprb.likelihoods.hNegative_binomial(tbin, inner_dims, inv_link, hgp, tensor_type=tensor_type)
         
-    elif ll_mode == 'CMP':
+    elif ll_mode_comps[0] == 'CMP':
+        J = int(ll_mode_comps[1])
         log_nu = torch.zeros(inner_dims)
         likelihood = nprb.likelihoods.COM_Poisson(tbin, inner_dims, inv_link, log_nu, J=J, tensor_type=tensor_type)
         
-    elif ll_mode =='hCMP':
+    elif ll_mode_comps[0] =='hCMP':
+        J = int(ll_mode[4:])
         likelihood = nprb.likelihoods.hCOM_Poisson(tbin, inner_dims, inv_link, hgp, J=J, tensor_type=tensor_type)
         
     elif ll_mode == 'IPP':
@@ -277,18 +350,21 @@ def get_likelihood(ll_mode, inner_dims, inv_link, tbin, J, cutoff, mapping_net, 
         likelihood = nprb.likelihoods.Gamma(tbin, inner_dims, inv_link, shape, 
                                             allow_duplicate=True, tensor_type=tensor_type)
         
-    elif ll_mode == 'IIG':
+    elif ll_mode_comps[0] == 'IIG':
         mu_t = torch.ones(inner_dims)
         likelihood = nprb.likelihoods.inv_Gaussian(tbin, inner_dims, inv_link, mu_t, 
                                                    allow_duplicate=True, tensor_type=tensor_type)
         
-    elif ll_mode == 'LN':
+    elif ll_mode_comps[0] == 'LN':
         sigma_t = torch.ones(inner_dims)
         likelihood = nprb.likelihoods.log_Normal(tbin, inner_dims, inv_link, sigma_t, 
                                                  allow_duplicate=True, tensor_type=tensor_type)
         
-    elif ll_mode[0] == 'U':
-        likelihood = nprb.likelihoods.Universal(inner_dims//C, C, inv_link, cutoff, mapping_net, tensor_type=tensor_type)
+    elif ll_mode_comps[0] == 'U':
+        basis = get_basis(ll_mode_comps[1])
+        mapping_net = net(C, basis, max_count, neurons, False)
+        likelihood = nprb.likelihoods.Universal(
+            neurons, C, inv_link, max_count, mapping_net, tensor_type=tensor_type)
         
     else:
         raise NotImplementedError
@@ -297,94 +373,19 @@ def get_likelihood(ll_mode, inner_dims, inv_link, tbin, J, cutoff, mapping_net, 
 
 
 
-### model pipeline ###
-def inputs_used(x_mode, z_mode, cov_tuple, batch_info, tensor_type):
-    """
-    Get inputs for model
-    """
-    raise NotImplementedError # 
+def gen_name(model_dict, delay, fold):
+    delaystr = ''.join(str(d) for d in model_dict['delays'])
     
-    
-    
-def enc_used(map_mode, x_mode, z_mode, cov_tuple, inner_dims, tensor_type):
-    """
-    Function for generating encoding model
-    """
-    raise NotImplemetedError
-    
-
-
-def setup_model(data, m, inputs_used, enc_used, tensor_type=torch.float, jitter=1e-5, J=100):
-    """"
-    Assemble the encoding model
-    """
-    neurons, tbin, timesamples, max_count, spktrain, cov, batch_info = data
-    ll_mode, filt_mode, map_mode, x_mode, z_mode, hist_len, folds, delays = m
-    
-    # checks
-    if filt_mode == '' and hist_len > 0:
-        raise ValueError
-    
-    # get settings
-    if ll_mode[0] == 'U':
-        inv_link = 'identity'
-        
-        basis_mode = ll_mode[1:3]
-        basis = get_basis(basis_mode)
-        C = int(ll_mode[3:])
-        mapping_net = net(C, basis, max_count, neurons, False)
-    
-    else:
-        if ll_mode == 'IBP':
-            inv_link = lambda x: torch.sigmoid(x)/tbin
-        elif ll_mode[-3:] == 'exp':
-            inv_link = 'exp'
-            ll_mode = ll_mode[:-3]
-        elif ll_mode[-3:] == 'spl':
-            inv_link = 'softplus'
-            ll_mode = ll_mode[:-3]
-        else:
-            raise ValueError('Likelihood inverse link function not defined')
-            
-        basis_mode = None
-        mapping_net = None
-        C = 1
-        
-    # inputs
-    inner_dims = neurons*C # number of output dimensions of the input_mapping
-    input_data, d_x, d_z = inputs_used(x_mode, z_mode, cov, batch_info, tensor_type)
-    in_dims = d_x + d_z
-    
-    input_group = nprb.inference.input_group(tensor_type)
-    input_group.set_XZ(input_data, timesamples, batch_info=batch_info)
-    
-    # encoder mapping
-    mapping, hgp = enc_used(map_mode, ll_mode, x_mode, z_mode, cov, in_dims, inner_dims, jitter, tensor_type)
-
-    # likelihood
-    likelihood = get_likelihood(ll_mode, inner_dims, inv_link, tbin, J, max_count, mapping_net, C, hgp, tensor_type)
-    if filt_mode != '':
-        filterobj = coupling_filter(filt_mode, tbin, neurons, hist_len, tensor_type)
-        likelihood = nprb.likelihoods.filters.filtered_likelihood(likelihood, filterobj)
-    likelihood.set_Y(torch.from_numpy(spktrain), batch_info=batch_info)
-    
-    full = nprb.inference.VI_optimized(input_group, mapping, likelihood)
-    return full
-
-
-
-### script
-def gen_name(mdl_name, m, binsize, max_count, delay, kcv):
-    ll_mode, filt_mode, map_mode, x_mode, z_mode, hist_len, folds, delays = m
-    delaystr = ''.join(str(d) for d in delays)
-    
-    name = mdl_name + '{}_{}H{}_{}_X[{}]_Z[{}]_{}K{}_{}d{}_{}f{}'.format(
-        ll_mode, filt_mode, hist_len, map_mode, x_mode, z_mode, binsize, max_count, delaystr, delay, folds, kcv, 
+    name = model_dict['model_name'] + '_{}_{}H{}_{}_X[{}]_Z[{}]_{}K{}_{}d{}_{}f{}'.format(
+        model_dict['ll_mode'], model_dict['filt_mode'], model_dict['hist_len'], model_dict['map_mode'], 
+        model_dict['x_mode'], model_dict['z_mode'], model_dict['bin_size'], model_dict['max_count'], 
+        delaystr, delay, model_dict['folds'], fold, 
     )
     return name
 
 
 
+### script ###
 def standard_parser(usage, description):
     """
     Parser arguments belonging to training loop
@@ -407,6 +408,7 @@ def standard_parser(usage, description):
     parser.set_defaults(single_spikes=False)
     
     parser.add_argument('--ncvx', default=2, type=int)
+    parser.add_argument('--seed', default=123, type=int)
     parser.add_argument('--gpu', default=0, type=int)
     parser.add_argument('--cov_MC', default=1, type=int)
     parser.add_argument('--ll_MC', default=10, type=int)
@@ -433,8 +435,8 @@ def standard_parser(usage, description):
 
 
 
-def preprocess_data(folds, delays, cv_runs, batchsize, rc_t, 
-                    resamples, rcov, hist_len, has_latent=False, trial_sizes=None):
+def preprocess_data(dataset_dict, folds, delays, cv_runs, batchsize, 
+                    hist_len, has_latent=False, trial_sizes=None):
     """
     Returns delay shifted cross-validated data for training
     rcov list of arrays of shape (neurons, time, 1)
@@ -442,6 +444,7 @@ def preprocess_data(folds, delays, cv_runs, batchsize, rc_t,
     
     Data comes in as stream of data, trials are appended consecutively
     """
+    rc_t, resamples, rcov = dataset_dict['spiketrains'], dataset_dict['timesamples'], dataset_dict['covariates']
     returns = []
     
     # need trial as tensor dimension for these
@@ -467,7 +470,7 @@ def preprocess_data(folds, delays, cv_runs, batchsize, rc_t,
         dd = [0]
         
     # history of spike train filter
-    rcov = [rc[hist_len:] for rc in rcov]
+    rcov = {n: rc[hist_len:] for n, rc in rcov.items()}
     resamples -= hist_len
     
     D = -D_max+D_min # total delay steps - 1
@@ -478,7 +481,7 @@ def preprocess_data(folds, delays, cv_runs, batchsize, rc_t,
         _min = D_min+delay
         _max = D_max+delay
         
-        rcov_ = [rc[_min:(_max if _max < 0 else None)] for rc in rcov]
+        rcov_ = {n: rc[_min:(_max if _max < 0 else None)] for n, rc in rcov.items()}
         resamples_ = resamples - D
         
         # get cv datasets
@@ -518,17 +521,84 @@ def preprocess_data(folds, delays, cv_runs, batchsize, rc_t,
                 vtrain, vcov = None, None
                 vbatch_info = None
 
-            returns.append((kcv, delay, ftrain, fcov, fbatch_info, vtrain, vcov, vbatch_info))
+            preprocess_dict = {
+                'fold': kcv, 
+                'delay': delay,
+                'spiketrain_fit': ftrain, 
+                'covariates_fit': fcov, 
+                'batching_info_fit': fbatch_info, 
+                'spiketrain_val': vtrain, 
+                'covariates_val': vcov, 
+                'batching_info_val': vbatch_info, 
+            }
+            returns.append(preprocess_dict)
         
     return returns
     
 
+    
+def setup_model(data_tuple, model_dict, enc_used):
+    """"
+    Assemble the encoding model
+    """
+    spktrain, cov, batch_info = data_tuple
+    neurons, timesamples = spktrain.shape[0], spktrain.shape[-1]
+    
+    ll_mode, filt_mode, map_mode, x_mode, z_mode, tensor_type = \
+        model_dict['ll_mode'], model_dict['filt_mode'], model_dict['map_mode'], \
+        model_dict['x_mode'], model_dict['z_mode'], model_dict['tensor_type']
+    
+    # seed everything
+    seed = model_dict['seed']
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    
+    # checks
+    if filt_mode == '' and model_dict['hist_len'] > 0:
+        raise ValueError
+    
+    # inputs
+    input_data, d_x, d_z = inputs_used(model_dict, cov, batch_info)
+    model_dict['map_xdims'], model_dict['map_zdims'] = d_x, d_z
+    
+    input_group = nprb.inference.input_group(tensor_type)
+    input_group.set_XZ(input_data, timesamples, batch_info=batch_info)
+    
+    # encoder mapping
+    ll_mode_comps = ll_mode.split('-')
+    C = int(ll_mode_comps[2]) if ll_mode_comps[0] == 'U' else 1
+    model_dict['map_outdims'] = neurons*C # number of output dimensions of the input_mapping
+    
+    learn_mean = (ll_mode_comps[0] != 'U')
+    mapping = enc_used(model_dict, cov, learn_mean)
 
-def training(dev, parser, dataset_tuple, inputs_used, enc_used, trial_sizes=None):
+    # likelihood
+    likelihood = get_likelihood(model_dict, enc_used)
+    if filt_mode != '':
+        filterobj = coupling_filter(model_dict)
+        likelihood = nprb.likelihoods.filters.filtered_likelihood(likelihood, filterobj)
+    likelihood.set_Y(torch.from_numpy(spktrain), batch_info=batch_info)
+    
+    full = nprb.inference.VI_optimized(input_group, mapping, likelihood)
+    return full
+
+    
+
+def train_model(dev, parser, dataset_dict, enc_used, checkpoint_dir, trial_sizes=None):
     """
     General training loop
+    
+    def inputs_used(model_dict, covariates, batch_info):
+        Get inputs for model
+
+    def enc_used(model_dict, covariates, inner_dims):
+        Function for generating encoding model
     """
+    if not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir)
+            
     nonconvex_trials = parser.ncvx
+    seed = parser.seed
     
     if parser.tensor_type == 'float':
         tensor_type = torch.float
@@ -551,20 +621,41 @@ def training(dev, parser, dataset_tuple, inputs_used, enc_used, trial_sizes=None
     z_mode = parser.z_mode
     hist_len = parser.hist_len
     
-    m = (ll_mode, filt_mode, map_mode, x_mode, z_mode, hist_len, folds, delays)
-    rcov, units_used, tbin, resamples, spktrain, max_count, bin_size, metainfo, mdl_name = dataset_tuple
+    model_dict = {
+        'seed': seed, 
+        'll_mode': ll_mode, 
+        'filt_mode': filt_mode, 
+        'map_mode': map_mode, 
+        'x_mode': x_mode, 
+        'z_mode': z_mode, 
+        'hist_len': hist_len, 
+        'folds': folds, 
+        'delays': delays, 
+        'neurons': dataset_dict['neurons'], 
+        'max_count': dataset_dict['max_count'], 
+        'bin_size': dataset_dict['bin_size'], 
+        'tbin': dataset_dict['tbin'], 
+        'model_name': dataset_dict['name'], 
+        'tensor_type': tensor_type, 
+        'jitter': parser.jitter, 
+    }
     
 
     # training
     has_latent = False if z_mode == '' else True
-    for cvdata in preprocess_data(folds, delays, cv_runs, batchsize, spktrain, resamples, 
-                                  rcov, hist_len, has_latent, trial_sizes):
-        kcv, delay, ftrain, fcov, fbatch_info, vtrain, vcov, vbatch_info = cvdata
-        data = (units_used, tbin, fcov[0].shape[0], max_count, ftrain, fcov, fbatch_info)
-        model_name = gen_name(mdl_name, m, bin_size, max_count, delay, kcv)
+    preprocessed = preprocess_data(
+        dataset_dict, folds, delays, cv_runs, batchsize, hist_len, has_latent, trial_sizes
+    )
+    for cvdata in preprocessed:
+        fitdata = (
+            cvdata['spiketrain_fit'], 
+            cvdata['covariates_fit'], 
+            cvdata['batching_info_fit'], 
+        )
+        model_name = gen_name(model_dict, cvdata['delay'], cvdata['fold'])
         print(model_name)
             
-        ### fitting
+        ### fitting ###
         for kk in range(nonconvex_trials):
 
             retries = 0
@@ -572,8 +663,7 @@ def training(dev, parser, dataset_tuple, inputs_used, enc_used, trial_sizes=None
                 try:
                     # model
                     full_model = setup_model(
-                        data, m, inputs_used, enc_used, 
-                        tensor_type, jitter=parser.jitter, J=100
+                        fitdata, model_dict, enc_used
                     )
                     full_model.to(dev)
 
@@ -602,60 +692,65 @@ def training(dev, parser, dataset_tuple, inputs_used, enc_used, trial_sizes=None
                         sys.exit()
                     retries += 1
 
-            ### save and progress
-            if os.path.exists('./checkpoint/best_fits'): # check previous best losses
-                with open('./checkpoint/best_fits', 'rb') as f:
-                    best_fits = pickle.load(f)
-                    if model_name in best_fits:
-                        lowest_loss = best_fits[model_name]
-                    else:
-                        lowest_loss = np.inf # nonconvex pick the best
-            else:
-                best_fits = {}          
+            ### save and progress ###
+            if os.path.exists(checkpoint_dir + model_name + '_result.p'):  # check previous best losses
+                with open(checkpoint_dir + model_name + '_result.p', 'rb') as f:
+                    results = pickle.load(f)
+                    lowest_loss = results['training_loss'][-1]
+            else:        
                 lowest_loss = np.inf # nonconvex pick the best
 
             if losses[-1] < lowest_loss:
                 # save model
-                if not os.path.exists('./checkpoint'):
-                    os.makedirs('./checkpoint')
-                torch.save({'full_model': full_model.state_dict()}, './checkpoint/' + model_name)
+                torch.save({'full_model': full_model.state_dict()}, checkpoint_dir + model_name + '.pt')
                 
-                best_fits[model_name] = losses[-1] # add new fit
-                with open('./checkpoint/best_fits', 'wb') as f:
-                    pickle.dump(best_fits, f)
+                with open(checkpoint_dir + model_name + '_result.p', 'wb') as f:
+                    results = {'training_loss': losses}
+                    pickle.dump(results, f)
 
 
                 
                 
-def load_model(checkpoint_dir, m, dataset_tuple, inputs_used, enc_used, 
-               delay, cv_run, batch_info, gpu, trial_sizes=None, 
-               tensor_type=torch.float, jitter=1e-5, J=100):
+def load_model(checkpoint_dir, model_dict, dataset_dict, enc_used, 
+               delay, cv_run, batch_info, gpu, trial_sizes=None):
     """
     Load the model with cross-validated data structure
     """
-    ll_mode, filt_mode, map_mode, x_mode, z_mode, hist_len, folds, delays = m
-    rcov, units_used, tbin, resamples, rc_t, max_count, bin_size, metainfo, mdl_name = dataset_tuple
+    ### data ###
+    has_latent = False if model_dict['z_mode'] == '' else True
+    cvdata = preprocess_data(dataset_dict, model_dict['folds'], [delay], [cv_run], 
+                             batch_info, model_dict['hist_len'], has_latent, trial_sizes)[0]
     
-    ### training loop
-    has_latent = False if z_mode == '' else True
-    cvdata = preprocess_data(folds, [delay], [cv_run], batch_info, rc_t, resamples, rcov, hist_len, 
-                             has_latent, trial_sizes)[0]
+    fit_data = (
+        cvdata['spiketrain_fit'], 
+        cvdata['covariates_fit'], 
+        cvdata['batching_info_fit'], 
+    )
+    val_data = (
+        cvdata['spiketrain_val'], 
+        cvdata['covariates_val'], 
+        cvdata['batching_info_val'], 
+    )
+    fit_set = (
+        inputs_used(model_dict, fit_data[1], batch_info)[0], 
+        torch.from_numpy(fit_data[0]), 
+        fit_data[2],
+    )
+    validation_set = (
+        inputs_used(model_dict, val_data[1], batch_info)[0] if val_data[1] is not None else None, 
+        torch.from_numpy(val_data[0]) if val_data[0] is not None else None, 
+        val_data[2],
+    )
     
-    _, _, ftrain, fcov, fbatch_info, vtrain, vcov, vbatch_info = cvdata
-    fit_data = (units_used, tbin, fcov[0].shape[0], max_count, ftrain, fcov, fbatch_info)
-    
-    fcov_ = inputs_used(x_mode, z_mode, fcov, batch_info, tensor_type)[0]
-    fit_set = (fcov_, torch.from_numpy(ftrain), fbatch_info)
-    vcov_ = inputs_used(x_mode, z_mode, vcov, batch_info, tensor_type)[0] if vcov is not None else None
-    validation_set = (vcov_, torch.from_numpy(vtrain), vbatch_info) if vtrain is not None else None
-    
-    ### model
-    full_model = setup_model(fit_data, m, inputs_used, enc_used, 
-                             jitter=jitter, J=J)
+    ### model ###
+    full_model = setup_model(fit_data, model_dict, enc_used)
     full_model.to(gpu)
-
-    ### load
-    model_name = gen_name(mdl_name, m, bin_size, max_count, delay, cv_run)
-    checkpoint = torch.load(checkpoint_dir + model_name, map_location='cuda:{}'.format(gpu))
+    
+    ### load ###
+    model_name = gen_name(model_dict, delay, cv_run)
+    checkpoint = torch.load(checkpoint_dir + model_name + '.pt', map_location='cuda:{}'.format(gpu))
     full_model.load_state_dict(checkpoint['full_model'])
-    return full_model, fit_set, validation_set
+    with open(checkpoint_dir + model_name + '_result.p', 'rb') as f:
+        training_results = pickle.load(f)
+        
+    return full_model, training_results, fit_set, validation_set

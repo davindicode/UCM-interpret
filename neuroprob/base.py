@@ -118,9 +118,9 @@ class _data_object(nn.Module):
         ### batching ###
         if type(batch_info) == list: # not continuous data
             self.batches = len(batch_info)
-            batch_size = [b[0] for b in batch_info]
-            batch_link = [b[1] for b in batch_info]
-            batch_initial = [b[2] for b in batch_info]
+            batch_size = [b['size'] for b in batch_info]
+            batch_link = [b['linked'] for b in batch_info]
+            batch_initial = [b['initial'] for b in batch_info]
             
         else: # number
             batch_size = batch_info

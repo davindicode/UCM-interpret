@@ -135,7 +135,7 @@ def marginalized_P(full_model, eval_points, eval_dims, rcov, bs, use_neuron, MC=
     P_tot = torch.empty((MC, len(use_neuron), Ep, km), dtype=torch.float)
     batches = int(np.ceil(animal_T / bs))
     for e in range(Ep):
-        print(e)
+        print('\r' + str(e), end="", flush=True)
         P_ = torch.empty((MC, len(use_neuron), animal_T, km), dtype=torch.float)
         for b in range(batches):
             bcov = [c[e*animal_T:(e+1)*animal_T][b*bs:(b+1)*bs] for c in covariates]

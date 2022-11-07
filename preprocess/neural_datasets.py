@@ -145,17 +145,18 @@ class peyrache_th1(_dataset):
         """
         Get periods of wake and sleep labelled by the experimenter
         """
-        datadir, session_id = self.datadir, self.session_id
+        datadir = self.datadir
+        ext_name = self.mouse_id+"-"+self.session_id
         
-        f_wake = open(datadir+session_id+"/"+session_id+".states.Wake", "r").read()
+        f_wake = open(datadir+ext_name+"/"+ext_name+".states.Wake", "r").read()
         l = f_wake.split(sep='\n')[:-1]
         wake = [{'start': float(i.split('\t')[0]), 'end': float(i.split('\t')[1])} for i in l]
 
-        f_REM = open(datadir+session_id+"/"+session_id+".states.REM", "r").read()
+        f_REM = open(datadir+ext_name+"/"+ext_name+".states.REM", "r").read()
         l = f_REM.split(sep='\n')[:-1]
         REM = [{'start': float(i.split('\t')[0]), 'end': float(i.split('\t')[1])} for i in l]
 
-        f_SWS = open(datadir+session_id+"/"+session_id+".states.SWS", "r").read()
+        f_SWS = open(datadir+ext_name+"/"+ext_name+".states.SWS", "r").read()
         l = f_SWS.split(sep='\n')[:-1]
         SWS = [{'start': float(i.split('\t')[0]), 'end': float(i.split('\t')[1])} for i in l]
         
@@ -179,11 +180,12 @@ class peyrache_th1(_dataset):
         """
         datadir, mouse_id, session_id = self.datadir, self.mouse_id, self.session_id
         electrode_groups = self.electrode_groups
+        ext_name = mouse_id+"-"+session_id
         
-        f_ang = open(datadir+"PositionFiles/"+mouse_id+"/"+session_id+"/"+session_id+".ang", "r").read()
-        f_pos = open(datadir+"PositionFiles/"+mouse_id+"/"+session_id+"/"+session_id+".pos", "r").read()
         # PosFiles, AngFiles are the same data
-
+        f_ang = open(datadir+"PositionFiles/"+mouse_id+"/"+ext_name+"/"+ext_name+".ang", "r").read()
+        f_pos = open(datadir+"PositionFiles/"+mouse_id+"/"+ext_name+"/"+ext_name+".pos", "r").read()
+        
         l = f_pos.split(sep='\n')[:-1]
         pos = np.array([i.split('\t') for i in l]).astype(np.float)
 
@@ -206,6 +208,8 @@ class peyrache_th1(_dataset):
         left_T_sb = int(np.ceil(left_T/sample_bin))
         right_T_sb = int(np.floor(right_T/sample_bin))
         synch_times = np.arange(left_T_sb, right_T_sb+1, 1) * sample_bin
+        if synch_times[-1] >= use_times[-1]:  # remove right edge for interpolator range
+            synch_times = synch_times[:-1]
         use_sample_num = len(synch_times)  # maximum number of sample bins for spike train lengths
         
         
@@ -217,8 +221,8 @@ class peyrache_th1(_dataset):
         totclusters = []
         for key in electrode_groups:
             for e in electrode_groups[key]:
-                f_res = open(datadir+session_id+"/"+session_id+".res.{}".format(e), "r").read()
-                f_clu = open(datadir+session_id+"/"+session_id+".clu.{}".format(e), "r").read()
+                f_res = open(datadir+ext_name+"/"+ext_name+".res.{}".format(e), "r").read()
+                f_clu = open(datadir+ext_name+"/"+ext_name+".clu.{}".format(e), "r").read()
 
                 # spike times are indices of bins at resolution of sample_bin
                 spiketimes.append(np.array(f_res.split(sep='\n')[:-1]).astype(np.float))

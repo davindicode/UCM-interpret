@@ -107,6 +107,13 @@ def compute_P(full_model, covariates, show_neuron, MC=1000, trials=1):
 def marginalized_P(full_model, eval_points, eval_dims, rcov, bs, use_neuron, MC=100, skip=1):
     """
     Marginalize over the behaviour p(X) for X not evaluated over.
+
+    :param list eval_points: list of ndarrays of values that you want to compute the marginal SCD at
+    :param list eval_dims: the dimensions that are not marginalized evaluated at eval_points
+    :param list rcov: list of covariate time series
+    :param int bs: batch size
+    :param list use_neuron: list of neurons used
+    :param int skip: only take every skip time points of the behaviour time series for marginalisation
     """
     rcov = [rc[::skip] for rc in rcov] # set dilution
     animal_T = rcov[0].shape[0]

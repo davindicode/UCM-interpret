@@ -70,7 +70,7 @@ def get_model_dict(dataset_dict):
 
 
 def tuning_curve_1d(cov_name, use_neuron, modelfit, rcov, tbin, num_points=100,
-                    MC=30, batch_size=1000):
+                    MC=30, batch_size=1000, skip=1):
     """Compute marginalized tuning curve for a given covariate."""
     lower_limit = np.min(rcov[cov_name])
     upper_limit = np.max(rcov[cov_name])
@@ -81,7 +81,7 @@ def tuning_curve_1d(cov_name, use_neuron, modelfit, rcov, tbin, num_points=100,
         P_mc = lib.helper.marginalized_P(modelfit, sweep,
                                          [list(rcov.keys()).index(cov_name)],
                                          rcov_matrix, batch_size, use_neuron,
-                                         MC)
+                                         MC, skip=skip)
 
     K = P_mc.shape[-1]
     counts = torch.arange(K)
@@ -129,12 +129,12 @@ def tuning_index_features(dataset, modelfit, model_dict):
     return features_rate, features_ff
 
 
-def tuning_curves(dataset, modelfit, model_dict, num_steps=100, MC=30, batch_size=100):
+def tuning_curves(dataset, modelfit, model_dict, num_steps=100, MC=30, batch_size=100, skip=1):
     """Compute marginalized tuning curves for all covariates."""
 
-    features_rate = np.empty((dataset['neurons'], num_steps))
-    features_ff = np.empty((dataset['neurons'], num_steps))
-    covariates = np.empty((num_steps,))
+    features_rate = np.empty((0, dataset['neurons'], num_steps))
+    features_ff = np.empty((0, dataset['neurons'], num_steps))
+    covariates = np.empty((0, num_steps))
     for cov in ['hd', 'omega', 'speed', 'x', 'y', 'time']:
         print('\n Calculating tuning indices for ', cov)
         hd_rate, hd_FF, sweep = tuning_curve_1d(cov, list(range(dataset['neurons'])),
@@ -143,17 +143,17 @@ def tuning_curves(dataset, modelfit, model_dict, num_steps=100, MC=30, batch_siz
                                                 model_dict['tbin'],
                                                 num_points=num_steps,
                                                 batch_size=batch_size,
-                                                MC=MC)
-
+                                                MC=MC, skip=skip)
         _, hd_rate_mean, _ = utils.signal.percentiles_from_samples(hd_rate,
                                                               [0.05, 0.5,
                                                                0.95])
         _, hd_ff_mean, _ = utils.signal.percentiles_from_samples(hd_FF,
                                                               [0.05, 0.5,
                                                                0.95]) # (neurons, steps)
-        np.append(features_rate, hd_rate_mean.numpy(), axis=0)  # (num_covariates, neurons, steps)
-        np.append(features_ff, hd_ff_mean.numpy(), axis=0)
-        np.append(covariates, sweep.numpy().flatten(), axis=0)  # (num_covariates, steps)
+        features_rate = np.concatenate((features_rate, hd_rate_mean.numpy()[None, :]), axis=0)  # (num_covariates, neurons, steps)
+        print(features_rate.shape)
+        features_ff = np.concatenate((features_ff, hd_ff_mean.numpy()[None, :]), axis=0)
+        covariates = np.concatenate((covariates, sweep.numpy().flatten()[None, :]), axis=0)  # (num_covariates, steps)
 
     features_rate = np.swapaxes(features_rate, 0, 1)
     features_ff = np.swapaxes(features_ff, 0, 1)
@@ -186,9 +186,9 @@ def compute_and_save_tcs(mouse_id, session_id):
 
     # Compute tuning curves
     print('Non-hd neurons dataset')
-    features_rate_nonhdc, features_ff_nonhdc, covariates_nonhdc = tuning_curves(dataset_nonhdc, modelfit_nonhdc, model_dict_nonhdc)
+    features_rate_nonhdc, features_ff_nonhdc, covariates_nonhdc = tuning_curves(dataset_nonhdc, modelfit_nonhdc, model_dict_nonhdc, skip=3)
     print('HD neurons dataset')
-    features_rate_hdc, features_ff_hdc, covariates_hdc = tuning_curves(dataset_hdc, modelfit_hdc, model_dict_hdc)
+    features_rate_hdc, features_ff_hdc, covariates_hdc = tuning_curves(dataset_hdc, modelfit_hdc, model_dict_hdc, skip=3)
 
     # Save data
     print('saving data')

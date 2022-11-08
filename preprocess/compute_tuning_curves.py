@@ -20,10 +20,10 @@ dev = utils.pytorch.get_device(gpu=gpu_dev)
 import warnings
 warnings.simplefilter('ignore')
 
-#mice_sessions = {
+# mice_sessions = {
 #    'Mouse12': ['120806', '120807', '120809', '120810' ], # '120808' is missing position files
 #    'Mouse17': ['130125', '130128', '130129', '130130', '130131', '130201', '130202', '130203', '130204'],
-#    'Mouse20': ['130514', '130515', '130516', '130517', '130520'],
+#    'Mouse20': ['130514', '130515', '130516', '130517'], # '130520' hdc models fails
 #    'Mouse24': ['131213', '131216', '131217','131218'],
 #    'Mouse25': ['140123', '140124', '140128', '140129', '140130', '140131', '140203', '140204', '140205', '140206'],
 #    'Mouse28': ['140310', '140311', '140312', '140313', '140317', '140318'],
@@ -31,11 +31,11 @@ warnings.simplefilter('ignore')
 
 mice_sessions = {
     'Mouse24': ['131213'],
-    'Mouse25': ['140129']
+    'Mouse25': ['140124', '140128', '140129']
 } 
 
 data_dir = '/scratches/ramanujan_2/dl543/HDC_PartIII/'
-models_dir = '/scratches/ramanujan_2/dl543/HDC_PartIII/checkpoint/'
+models_dir = '/scratches/ramanujan_2/vn283/HDC_PartIII/checkpoint/'
 savedir = '/scratches/ramanujan_2/vn283/HDC_PartIII/tc_data/'
 
 phase = 'wake'
@@ -206,6 +206,7 @@ def compute_and_save_tcs(mouse_id, session_id):
 def main():
     for mouse_id in mice_sessions.keys():
         for session_id in mice_sessions[mouse_id]:
+            print(f'{mouse_id}-{session_id}')
             compute_and_save_tcs(mouse_id, session_id)
 
 

@@ -1,0 +1,161 @@
+import numpy as np
+import scipy as sc
+
+import torch
+import torch.nn as nn
+from torch.nn.parameter import Parameter
+import torch.nn.functional as F
+import torch.optim as optim
+
+import pickle
+import matplotlib.pyplot as plt
+
+# add paths to access shared code
+import sys
+sys.path.append("..")
+sys.path.append("../scripts/")
+
+# import library implementing models
+import neuroprob as nprb
+from neuroprob import utils
+
+# import utility code for model building/training/loading
+import lib
+import HDC
+
+# get GPU device if available
+gpu_dev = 0
+dev = utils.pytorch.get_device(gpu=gpu_dev)
+
+import warnings
+warnings.simplefilter('ignore')
+
+
+def get_model_dict(dataset_dict):
+    """Get model info needed for loading."""
+    return {
+        'seed': 123,
+        'll_mode': 'U-ec-3',  # stands for universal count model with exponential-quadratic expansion and C = 3
+        'filt_mode': '',  # GLM couplings
+        'map_mode': 'svgp-64',  # a sparse variational GP mapping with 64 inducing points
+        'x_mode': 'hd-omega-speed-x-y-time',  # observed covariates (behaviour)
+        'z_mode': '',  # latent covariates
+        'hist_len': 0,
+        'folds': 5,
+        'delays': [0],
+        'neurons': dataset_dict['neurons'],
+        'max_count': dataset_dict['max_count'],
+        'bin_size': dataset_dict['bin_size'],
+        'tbin': dataset_dict['tbin'],
+        'model_name': dataset_dict['name'],
+        'tensor_type': torch.float,
+        'jitter': 1e-5,
+    }
+
+
+def tuning_curve_1d(cov_name, use_neuron, modelfit, rcov, tbin, num_points=100,
+                    MC=30, batch_size=1000):
+    """Compute marginalized tuning curve for a covariate."""
+    lower_limit = np.min(rcov[cov_name])
+    upper_limit = np.max(rcov[cov_name])
+    sweep = torch.linspace(lower_limit, upper_limit, num_points)[None, :]
+
+    rcov_matrix = [torch.tensor(rcov[k]) for k in rcov.keys()]
+    with torch.no_grad():
+        P_mc = lib.helper.marginalized_P(modelfit, sweep,
+                                         [list(rcov.keys()).index(cov_name)],
+                                         rcov_matrix, batch_size, use_neuron,
+                                         MC)
+
+    K = P_mc.shape[-1]
+    counts = torch.arange(K)
+
+    hd_mean = (counts[None, None, None, :] * P_mc).sum(
+        -1)  # (MC, neurons, steps)
+    hd_rate = hd_mean / tbin  # in units of Hz
+    hd_var = (counts[None, None, None, :] ** 2 * P_mc).sum(-1) - hd_mean ** 2
+    hd_FF = hd_var / (hd_mean + 1e-12)
+    return hd_rate, hd_FF, sweep.numpy().flatten()
+
+
+def tuning_index(hd_stat):
+    """Compute the tuning index of a tuning curve with a given statistics of spike count distributions."""
+    _, tc_mean, _ = utils.signal.percentiles_from_samples(hd_stat, [0.05, 0.5, 0.95])
+
+    tc_max, _ = torch.max(tc_mean, axis=1)
+    tc_min, _ = torch.min(tc_mean, axis=1)
+
+    return (tc_max - tc_min) / (tc_max + tc_min)
+
+
+def tuning_index_features(dataset, modelfit, model_dict):
+    """Compute feature vector consisting of tuning indices for different covariates."""
+    features_rate = []
+    features_ff = []
+    for cov in ['hd', 'omega', 'speed', 'x', 'y', 'time']:
+        print('Calculating tuning indices for ', cov, '\n')
+        hd_rate, hd_FF, sweep = tuning_curve_1d(cov, list(range(dataset['neurons'])),
+                                                modelfit,
+                                                dataset['covariates'],
+                                                model_dict['tbin'],
+                                                batch_size=100)
+
+        features_rate.append(tuning_index(hd_rate))
+        features_ff.append(tuning_index(hd_FF))
+
+    f_rate = np.array([features_rate[i].numpy() for i in range(len(features_rate))])  # (num_cov, num_neurons)
+    features_rate = np.swapaxes(f_rate, 0, 1)  # num_neurons x num_covariates
+
+    f_ff = np.array(
+        [features_ff[i].numpy() for i in range(len(features_ff))])
+    features_ff = np.swapaxes(f_ff, 0, 1)  # num_neurons x num_covariates
+
+    return features_rate, features_ff
+
+
+def main():
+    # Loading data
+    mouse_id = 'Mouse24'
+    session_id = '131213'
+    phase = 'wake'
+    data_dir = '/scratches/ramanujan_2/dl543/HDC_PartIII/'
+    bin_size = 160  # ms
+
+    single_spikes = False
+    dataset_hdc = HDC.get_dataset(mouse_id, session_id, phase, 'hdc', bin_size,
+                                  single_spikes, path=data_dir)
+
+    dataset_nonhdc = HDC.get_dataset(mouse_id, session_id, phase, 'nonhdc',
+                                     bin_size, single_spikes, path=data_dir)
+
+    # Loading the models
+    model_dict_hdc = get_model_dict(dataset_hdc)
+    model_dict_nonhdc = get_model_dict(dataset_nonhdc)
+    models_dir = '/scratches/ramanujan_2/dl543/HDC_PartIII/checkpoint/'
+    cv_run = -1  # test set is last 1/5 of dataset time series
+    delay = 0
+    batch_size = 5000  # size of time segments of each batch in dataset below
+
+    modelfit_hdc, training_results_hdc, fit_set_hdc, validation_set_hdc = lib.models.load_model(
+        models_dir, model_dict_hdc, dataset_hdc, HDC.enc_used,
+        delay, cv_run, batch_size, gpu_dev
+    )
+
+    modelfit_nonhdc, training_results_nonhdc, fit_set_nonhdc, validation_set_nonhdc = lib.models.load_model(
+        models_dir, model_dict_nonhdc, dataset_nonhdc, HDC.enc_used,
+        delay, cv_run, batch_size, gpu_dev
+    )
+
+    num_hdc = dataset_hdc['neurons']
+    num_nonhdc = dataset_nonhdc['neurons']
+
+    # Compute tuning index features
+    features_rate_nonhdc, features_ff_nonhdc = tuning_index_features(dataset_nonhdc, modelfit_nonhdc, model_dict_nonhdc)
+    features_rate_hdc, features_ff_hdc = tuning_index_features(dataset_hdc, modelfit_hdc, model_dict_hdc)
+
+    features_rate_combined = np.vstack((features_rate_hdc, features_rate_nonhdc))
+    features_ff_combined = np.vstack((features_ff_hdc, features_ff_nonhdc))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,22 +1,12 @@
 import numpy as np
-import scipy as sc
-
 import torch
-import torch.nn as nn
-from torch.nn.parameter import Parameter
-import torch.nn.functional as F
-import torch.optim as optim
-
-import pickle
-import matplotlib.pyplot as plt
 
 # add paths to access shared code
-import sys
-sys.path.append("..")
-sys.path.append("../scripts/")
+import os, sys
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../scripts/"))
 
 # import library implementing models
-import neuroprob as nprb
 from neuroprob import utils
 
 # import utility code for model building/training/loading
@@ -29,6 +19,20 @@ dev = utils.pytorch.get_device(gpu=gpu_dev)
 
 import warnings
 warnings.simplefilter('ignore')
+
+data_dir = '../data/'
+models_dir = '../models/'
+savedir = '../checkpoint/'
+
+phase = 'wake'
+mouse_id = 'Mouse24'
+session_id = '131213'
+bin_size = 160  # ms
+single_spikes = False
+
+cv_run = -1  # test set is last 1/5 of dataset time series
+delay = 0
+batch_size = 5000  # size of time segments of each batch in dataset below
 
 
 def get_model_dict(dataset_dict):
@@ -55,7 +59,7 @@ def get_model_dict(dataset_dict):
 
 def tuning_curve_1d(cov_name, use_neuron, modelfit, rcov, tbin, num_points=100,
                     MC=30, batch_size=1000):
-    """Compute marginalized tuning curve for a covariate."""
+    """Compute marginalized tuning curve for a given covariate."""
     lower_limit = np.min(rcov[cov_name])
     upper_limit = np.max(rcov[cov_name])
     sweep = torch.linspace(lower_limit, upper_limit, num_points)[None, :]
@@ -113,15 +117,40 @@ def tuning_index_features(dataset, modelfit, model_dict):
     return features_rate, features_ff
 
 
+def tuning_curves(dataset, modelfit, model_dict, num_steps=100, MC=30, batch_size=100):
+    """Compute marginalized tuning curves for all covariates."""
+
+    features_rate = np.empty((dataset['neurons'], num_steps))
+    features_ff = np.empty((dataset['neurons'], num_steps))
+    covariates = np.empty((num_steps,))
+    for cov in ['hd', 'omega', 'speed', 'x', 'y', 'time']:
+        print('\n Calculating tuning indices for ', cov)
+        hd_rate, hd_FF, sweep = tuning_curve_1d(cov, list(range(dataset['neurons'])),
+                                                modelfit,
+                                                dataset['covariates'],
+                                                model_dict['tbin'],
+                                                num_points=num_steps,
+                                                batch_size=batch_size,
+                                                MC=MC)
+
+        _, hd_rate_mean, _ = utils.signal.percentiles_from_samples(hd_rate,
+                                                              [0.05, 0.5,
+                                                               0.95])
+        _, hd_ff_mean, _ = utils.signal.percentiles_from_samples(hd_FF,
+                                                              [0.05, 0.5,
+                                                               0.95]) # (neurons, steps)
+        np.append(features_rate, hd_rate_mean.numpy(), axis=0)  # (num_covariates, neurons, steps)
+        np.append(covariates, sweep, axis=0)  # (num_covariates, steps)
+        np.append(features_ff, hd_FF.numpy(), axis=0)
+
+    features_rate = np.swapaxes(features_rate, 0, 1)
+    features_ff = np.swapaxes(features_ff, 0, 1)
+
+    return features_rate, features_ff, covariates
+
+
 def main():
     # Loading data
-    mouse_id = 'Mouse24'
-    session_id = '131213'
-    phase = 'wake'
-    data_dir = '/scratches/ramanujan_2/dl543/HDC_PartIII/'
-    bin_size = 160  # ms
-
-    single_spikes = False
     dataset_hdc = HDC.get_dataset(mouse_id, session_id, phase, 'hdc', bin_size,
                                   single_spikes, path=data_dir)
 
@@ -131,10 +160,6 @@ def main():
     # Loading the models
     model_dict_hdc = get_model_dict(dataset_hdc)
     model_dict_nonhdc = get_model_dict(dataset_nonhdc)
-    models_dir = '/scratches/ramanujan_2/dl543/HDC_PartIII/checkpoint/'
-    cv_run = -1  # test set is last 1/5 of dataset time series
-    delay = 0
-    batch_size = 5000  # size of time segments of each batch in dataset below
 
     modelfit_hdc, training_results_hdc, fit_set_hdc, validation_set_hdc = lib.models.load_model(
         models_dir, model_dict_hdc, dataset_hdc, HDC.enc_used,
@@ -146,15 +171,20 @@ def main():
         delay, cv_run, batch_size, gpu_dev
     )
 
-    num_hdc = dataset_hdc['neurons']
-    num_nonhdc = dataset_nonhdc['neurons']
-
     # Compute tuning index features
-    features_rate_nonhdc, features_ff_nonhdc = tuning_index_features(dataset_nonhdc, modelfit_nonhdc, model_dict_nonhdc)
-    features_rate_hdc, features_ff_hdc = tuning_index_features(dataset_hdc, modelfit_hdc, model_dict_hdc)
+    features_rate_nonhdc, features_ff_nonhdc, covariates_nonhdc = tuning_curves(dataset_nonhdc, modelfit_nonhdc, model_dict_nonhdc)
+    features_rate_hdc, features_ff_hdc, covariates_hdc = tuning_curves(dataset_hdc, modelfit_hdc, model_dict_hdc)
 
-    features_rate_combined = np.vstack((features_rate_hdc, features_rate_nonhdc))
-    features_ff_combined = np.vstack((features_ff_hdc, features_ff_nonhdc))
+    print('saving data')
+    np.savez_compressed(savedir + f'/{mouse_id}_{session_id}_{phase}_hdc',
+                        tuning_curves_rates=features_rate_hdc,
+                        tuning_curves_FF=features_ff_hdc,
+                        tuning_curves_covariates=covariates_hdc)
+
+    np.savez_compressed(savedir + f'/{mouse_id}_{session_id}_{phase}_nonhdc',
+                        tuning_curves_rates=features_rate_nonhdc,
+                        tuning_curves_FF=features_ff_nonhdc,
+                        tuning_curves_covariates=covariates_nonhdc)
 
 
 if __name__ == "__main__":

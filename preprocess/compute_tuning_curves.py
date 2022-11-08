@@ -20,13 +20,25 @@ dev = utils.pytorch.get_device(gpu=gpu_dev)
 import warnings
 warnings.simplefilter('ignore')
 
-data_dir = '../data/'
-models_dir = '../models/'
-savedir = '../checkpoint/'
+#mice_sessions = {
+#    'Mouse12': ['120806', '120807', '120809', '120810' ], # '120808' is missing position files
+#    'Mouse17': ['130125', '130128', '130129', '130130', '130131', '130201', '130202', '130203', '130204'],
+#    'Mouse20': ['130514', '130515', '130516', '130517', '130520'],
+#    'Mouse24': ['131213', '131216', '131217','131218'],
+#    'Mouse25': ['140123', '140124', '140128', '140129', '140130', '140131', '140203', '140204', '140205', '140206'],
+#    'Mouse28': ['140310', '140311', '140312', '140313', '140317', '140318'],
+#} 
+
+mice_sessions = {
+    'Mouse24': ['131213'],
+    'Mouse25': ['140129']
+} 
+
+data_dir = '/scratches/ramanujan_2/dl543/HDC_PartIII/'
+models_dir = '/scratches/ramanujan_2/dl543/HDC_PartIII/checkpoint/'
+savedir = '/scratches/ramanujan_2/vn283/HDC_PartIII/tc_data/'
 
 phase = 'wake'
-mouse_id = 'Mouse24'
-session_id = '131213'
 bin_size = 160  # ms
 single_spikes = False
 
@@ -79,7 +91,7 @@ def tuning_curve_1d(cov_name, use_neuron, modelfit, rcov, tbin, num_points=100,
     hd_rate = hd_mean / tbin  # in units of Hz
     hd_var = (counts[None, None, None, :] ** 2 * P_mc).sum(-1) - hd_mean ** 2
     hd_FF = hd_var / (hd_mean + 1e-12)
-    return hd_rate, hd_FF, sweep.numpy().flatten()
+    return hd_rate, hd_FF, sweep
 
 
 def tuning_index(hd_stat):
@@ -140,8 +152,8 @@ def tuning_curves(dataset, modelfit, model_dict, num_steps=100, MC=30, batch_siz
                                                               [0.05, 0.5,
                                                                0.95]) # (neurons, steps)
         np.append(features_rate, hd_rate_mean.numpy(), axis=0)  # (num_covariates, neurons, steps)
-        np.append(covariates, sweep, axis=0)  # (num_covariates, steps)
-        np.append(features_ff, hd_FF.numpy(), axis=0)
+        np.append(features_ff, hd_ff_mean.numpy(), axis=0)
+        np.append(covariates, sweep.numpy().flatten(), axis=0)  # (num_covariates, steps)
 
     features_rate = np.swapaxes(features_rate, 0, 1)
     features_ff = np.swapaxes(features_ff, 0, 1)
@@ -149,7 +161,8 @@ def tuning_curves(dataset, modelfit, model_dict, num_steps=100, MC=30, batch_siz
     return features_rate, features_ff, covariates
 
 
-def main():
+def compute_and_save_tcs(mouse_id, session_id):
+    """Compute and save tuning curves for a given mouse and session"""
     # Loading data
     dataset_hdc = HDC.get_dataset(mouse_id, session_id, phase, 'hdc', bin_size,
                                   single_spikes, path=data_dir)
@@ -171,20 +184,29 @@ def main():
         delay, cv_run, batch_size, gpu_dev
     )
 
-    # Compute tuning index features
+    # Compute tuning curves
+    print('Non-hd neurons dataset')
     features_rate_nonhdc, features_ff_nonhdc, covariates_nonhdc = tuning_curves(dataset_nonhdc, modelfit_nonhdc, model_dict_nonhdc)
+    print('HD neurons dataset')
     features_rate_hdc, features_ff_hdc, covariates_hdc = tuning_curves(dataset_hdc, modelfit_hdc, model_dict_hdc)
 
+    # Save data
     print('saving data')
-    np.savez_compressed(savedir + f'/{mouse_id}_{session_id}_{phase}_hdc',
+    np.savez_compressed(savedir + f'{mouse_id}_{session_id}_{phase}_hdc',
                         tuning_curves_rates=features_rate_hdc,
                         tuning_curves_FF=features_ff_hdc,
                         tuning_curves_covariates=covariates_hdc)
 
-    np.savez_compressed(savedir + f'/{mouse_id}_{session_id}_{phase}_nonhdc',
+    np.savez_compressed(savedir + f'{mouse_id}_{session_id}_{phase}_nonhdc',
                         tuning_curves_rates=features_rate_nonhdc,
                         tuning_curves_FF=features_ff_nonhdc,
                         tuning_curves_covariates=covariates_nonhdc)
+
+
+def main():
+    for mouse_id in mice_sessions.keys():
+        for session_id in mice_sessions[mouse_id]:
+            compute_and_save_tcs(mouse_id, session_id)
 
 
 if __name__ == "__main__":

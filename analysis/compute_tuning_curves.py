@@ -13,16 +13,12 @@ from neuroprob import utils
 import lib
 import HDC
 
-# get GPU device if available
-gpu_dev = 0
-dev = utils.pytorch.get_device(gpu=gpu_dev)
-
 import warnings
 warnings.simplefilter('ignore')
 
 # mice_sessions = {
 #    'Mouse12': ['120806', '120807', '120809', '120810' ], # '120808' is missing position files
-#    'Mouse17': ['130125', '130128', '130129', '130130', '130131', '130201', '130202', '130203', '130204'],
+#    'Mouse17': ['130125', '130128', '130129', '130131', '130201', '130202', '130203', '130204'], # '130130' computing tuning curves fails
 #    'Mouse20': ['130514', '130515', '130516', '130517'], # '130520' hdc models fails
 #    'Mouse24': ['131213', '131216', '131217','131218'],
 #    'Mouse25': ['140123', '140124', '140128', '140129', '140130', '140131', '140203', '140204', '140205', '140206'],
@@ -30,9 +26,21 @@ warnings.simplefilter('ignore')
 #} 
 
 mice_sessions = {
-    'Mouse24': ['131213'],
-    'Mouse25': ['140124', '140128', '140129']
+    'Mouse12': [],
+    'Mouse17': [],
+    'Mouse24': [],
+    'Mouse25': [],
+    'Mouse28': []
 } 
+
+# already done
+#    'Mouse12': ['120806'],
+#    'Mouse17': ['130125', '130128', '130131', '130202', '130203'],
+#    'Mouse20': ['130514', '130515', '130516', '130517'],
+#    'Mouse24': ['131213', '131217', '131218'],
+#    'Mouse25': ['140124', '140128', '140129'],
+#    'Mouse28': ['140310']
+
 
 data_dir = '/scratches/ramanujan_2/dl543/HDC_PartIII/'
 models_dir = '/scratches/ramanujan_2/vn283/HDC_PartIII/checkpoint/'
@@ -151,7 +159,6 @@ def tuning_curves(dataset, modelfit, model_dict, num_steps=100, MC=30, batch_siz
                                                               [0.05, 0.5,
                                                                0.95]) # (neurons, steps)
         features_rate = np.concatenate((features_rate, hd_rate_mean.numpy()[None, :]), axis=0)  # (num_covariates, neurons, steps)
-        print(features_rate.shape)
         features_ff = np.concatenate((features_ff, hd_ff_mean.numpy()[None, :]), axis=0)
         covariates = np.concatenate((covariates, sweep.numpy().flatten()[None, :]), axis=0)  # (num_covariates, steps)
 
@@ -161,7 +168,7 @@ def tuning_curves(dataset, modelfit, model_dict, num_steps=100, MC=30, batch_siz
     return features_rate, features_ff, covariates
 
 
-def compute_and_save_tcs(mouse_id, session_id):
+def compute_and_save_tcs(mouse_id, session_id, gpu_dev=0):
     """Compute and save tuning curves for a given mouse and session"""
     # Loading data
     dataset_hdc = HDC.get_dataset(mouse_id, session_id, phase, 'hdc', bin_size,
@@ -204,10 +211,17 @@ def compute_and_save_tcs(mouse_id, session_id):
 
 
 def main():
-    for mouse_id in mice_sessions.keys():
-        for session_id in mice_sessions[mouse_id]:
-            print(f'{mouse_id}-{session_id}')
-            compute_and_save_tcs(mouse_id, session_id)
+    parser = lib.models.standard_parser("%(prog)s [OPTION] [FILE]...", "Compute tuning curves.")
+    parser.add_argument('--mouse_id', action='store', type=str)
+    parser.add_argument('--session_id', action='store', type=str)
+    args = parser.parse_args()
+    
+    dev = utils.pytorch.get_device(gpu=args.gpu)
+    
+    mouse_id, session_id = args.mouse_id, args.session_id
+
+    print(f'{mouse_id}-{session_id}')
+    compute_and_save_tcs(mouse_id, session_id, args.gpu)
 
 
 if __name__ == "__main__":

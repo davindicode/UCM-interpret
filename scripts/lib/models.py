@@ -407,8 +407,7 @@ def standard_parser(usage, description):
     parser.add_argument('--single_spikes', dest='single_spikes', action='store_true')
     parser.set_defaults(single_spikes=False)
     
-    parser.add_argument('--ncvx', default=2, type=int)
-    parser.add_argument('--seed', default=123, type=int)
+    parser.add_argument('--seeds', default=[123], nargs='+', type=int)
     parser.add_argument('--gpu', default=0, type=int)
     parser.add_argument('--cov_MC', default=1, type=int)
     parser.add_argument('--ll_MC', default=10, type=int)
@@ -597,8 +596,7 @@ def train_model(dev, parser, dataset_dict, enc_used, checkpoint_dir, trial_sizes
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
             
-    nonconvex_trials = parser.ncvx
-    seed = parser.seed
+    seeds = parser.seeds
     
     if parser.tensor_type == 'float':
         tensor_type = torch.float
@@ -622,7 +620,6 @@ def train_model(dev, parser, dataset_dict, enc_used, checkpoint_dir, trial_sizes
     hist_len = parser.hist_len
     
     model_dict = {
-        'seed': seed, 
         'll_mode': ll_mode, 
         'filt_mode': filt_mode, 
         'map_mode': map_mode, 
@@ -654,59 +651,57 @@ def train_model(dev, parser, dataset_dict, enc_used, checkpoint_dir, trial_sizes
         )
         model_name = gen_name(model_dict, cvdata['delay'], cvdata['fold'])
         print(model_name)
-            
+        
         ### fitting ###
-        for kk in range(nonconvex_trials):
+        for seed in seeds:
+            model_dict['seed'] = seed
+            print('seed: {}'.format(seed))
+        
+            try:
+                # model
+                full_model = setup_model(
+                    fitdata, model_dict, enc_used
+                )
+                full_model.to(dev)
 
-            retries = 0
-            while True:
-                try:
-                    # model
-                    full_model = setup_model(
-                        fitdata, model_dict, enc_used
-                    )
-                    full_model.to(dev)
+                # fit
+                sch = lambda o: optim.lr_scheduler.MultiplicativeLR(o, lambda e: parser.scheduler_factor)
+                opt_tuple = (optim.Adam, parser.scheduler_interval, sch)
+                opt_lr_dict = {'default': parser.lr}
+                if z_mode == 'T1':
+                    opt_lr_dict['mapping.kernel.kern1._lengthscale'] = parser.lr_2
+                for z_dim in full_model.input_group.latent_dims:
+                    opt_lr_dict['input_group.input_{}.variational.finv_std'.format(z_dim)] = parser.lr_2
 
-                    # fit
-                    sch = lambda o: optim.lr_scheduler.MultiplicativeLR(o, lambda e: parser.scheduler_factor)
-                    opt_tuple = (optim.Adam, parser.scheduler_interval, sch)
-                    opt_lr_dict = {'default': parser.lr}
-                    if z_mode == 'T1':
-                        opt_lr_dict['mapping.kernel.kern1._lengthscale'] = parser.lr_2
-                    for z_dim in full_model.input_group.latent_dims:
-                        opt_lr_dict['input_group.input_{}.variational.finv_std'.format(z_dim)] = parser.lr_2
+                full_model.set_optimizers(opt_tuple, opt_lr_dict)
 
-                    full_model.set_optimizers(opt_tuple, opt_lr_dict)#, nat_grad=('rate_model.0.u_loc', 'rate_model.0.u_scale_tril'))
+                annealing = lambda x: 1.0
+                losses = full_model.fit(parser.max_epochs, loss_margin=parser.loss_margin, 
+                                        margin_epochs=parser.margin_epochs, kl_anneal_func=annealing, 
+                                        cov_samples=parser.cov_MC, ll_samples=parser.ll_MC, ll_mode=integral_mode)
+            
+                ### save and progress ###
+                if os.path.exists(checkpoint_dir + model_name + '_result.p'):  # check previous best losses
+                    with open(checkpoint_dir + model_name + '_result.p', 'rb') as f:
+                        results = pickle.load(f)
+                        lowest_loss = results['training_loss'][-1]
+                else:        
+                    lowest_loss = np.inf # nonconvex pick the best
 
-                    annealing = lambda x: 1.0
-                    losses = full_model.fit(parser.max_epochs, loss_margin=parser.loss_margin, 
-                                            margin_epochs=parser.margin_epochs, kl_anneal_func=annealing, 
-                                            cov_samples=parser.cov_MC, ll_samples=parser.ll_MC, ll_mode=integral_mode)
-                    break
-                    
-                except RuntimeError as e:
-                    print(e)
-                    print('Retrying...')
-                    if retries == 3: # max retries
-                        print('Stopped after max retries.')
-                        sys.exit()
-                    retries += 1
+                if losses[-1] < lowest_loss:
+                    # save model
+                    torch.save({'full_model': full_model.state_dict()}, checkpoint_dir + model_name + '.pt')
 
-            ### save and progress ###
-            if os.path.exists(checkpoint_dir + model_name + '_result.p'):  # check previous best losses
-                with open(checkpoint_dir + model_name + '_result.p', 'rb') as f:
-                    results = pickle.load(f)
-                    lowest_loss = results['training_loss'][-1]
-            else:        
-                lowest_loss = np.inf # nonconvex pick the best
+                    with open(checkpoint_dir + model_name + '_result.p', 'wb') as f:
+                        results = {
+                            'training_loss': losses,
+                            'seed': seed,
+                            'config': parser,
+                        }
+                        pickle.dump(results, f)
 
-            if losses[-1] < lowest_loss:
-                # save model
-                torch.save({'full_model': full_model.state_dict()}, checkpoint_dir + model_name + '.pt')
-                
-                with open(checkpoint_dir + model_name + '_result.p', 'wb') as f:
-                    results = {'training_loss': losses}
-                    pickle.dump(results, f)
+            except RuntimeError as e:
+                print(e)
 
 
                 

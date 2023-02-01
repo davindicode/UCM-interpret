@@ -12,7 +12,7 @@ import pickle
 
 import os
 import sys
-sys.path.append("..")
+sys.path.append('..')
 
 import neuroprob as mdl
 import neuroprob.utils as utils
@@ -30,9 +30,11 @@ mice_sessions = {
     'Mouse28': ['140310', '140311', '140312', '140313', '140317', '140318'],
 } 
 
+mice_sessions = {'Mouse12': ['120806']}
+
 phase = 'wake'
-datadir = '/scratches/ramanujan_2/dl543/HDC_PartIII'
-savedir = '/scratches/ramanujan_2/dl543/HDC_PartIII'
+datadir = '/scratches/ramanujan_2/vn283/HDC_PartIII/preprocessed'
+savedir = '/scratches/ramanujan_2/vn283/HDC_PartIII/preprocessed'
 
 if not os.path.exists(savedir):
     os.makedirs(savedir)

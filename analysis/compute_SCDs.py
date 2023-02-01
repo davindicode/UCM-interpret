@@ -34,6 +34,7 @@ mice_sessions = {
     'Mouse28': ['140310']
 } 
 
+mice_sessions = {'Mouse12': ['120806', '120807']}
 # already done
 #    'Mouse12': [],
 #    'Mouse17': [],

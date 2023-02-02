@@ -795,8 +795,8 @@ def PSD_solve(P, B):
     """
     Compute P^-1 B, where P is a PSD matrix, using the Cholesky factoristion
     """
-    L = torch.cholesky(P)
-    return torch.triangular_solve(Q, L, upper=False)[0]
+    L = torch.linalg.cholesky(P)
+    return torch.linalg.solve_triangular(L, Q, upper=False)
     
     
 

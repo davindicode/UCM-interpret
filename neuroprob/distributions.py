@@ -248,7 +248,7 @@ class Tn_MVN(TorchDistribution): # Not scalable as ReLie sum grows exponentially
         if scale_tril is not None:
             self._unbroadcasted_scale_tril = scale_tril
         elif covariance_matrix is not None:
-            self._unbroadcasted_scale_tril = torch.cholesky(covariance_matrix)
+            self._unbroadcasted_scale_tril = torch.linalg.cholesky(covariance_matrix)
         else:  # precision_matrix is not None
             self._unbroadcasted_scale_tril = _precision_to_scale_tril(precision_matrix)
 

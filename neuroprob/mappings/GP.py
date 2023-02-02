@@ -44,7 +44,7 @@ def p_F_U(X, X_u, kernelobj, f_loc, f_scale_tril, full_cov=False,
     
     Kff = kernelobj(X_u[None, ...])[0, ...].contiguous()
     Kff.data.view(Kff.shape[0], -1)[:, ::N_u+1] += jitter  # add jitter to diagonal
-    Lff = Kff.cholesky() # N, N_u, N_u
+    Lff = torch.linalg.cholesky(Kff) # N, N_u, N_u
     
     Kfs = kernelobj(X_u[None, ...], X) # K, N, N_u, T
 
@@ -67,7 +67,7 @@ def p_F_U(X, X_u, kernelobj, f_loc, f_scale_tril, full_cov=False,
 
     if whiten:
         v_4D = f_loc[None, ...].repeat(K, 1, 1, 1) # K, N, N_u, N_
-        W = Kfs.triangular_solve(Lff, upper=False)[0]
+        W = torch.linalg.solve_triangular(Lff, Kfs, upper=False)
         W = W.view(N_l, N_u, K, T).permute(2, 0, 3, 1) # K, N, T, N_u
         if f_scale_tril is not None:
             S_4D = f_scale_tril[None, ...].repeat(K, 1, 1, 1)
@@ -77,7 +77,7 @@ def p_F_U(X, X_u, kernelobj, f_loc, f_scale_tril, full_cov=False,
         if f_scale_tril is not None:
             pack = torch.cat((pack, f_scale_tril), dim=-1)
 
-        Lffinv_pack = pack.triangular_solve(Lff, upper=False)[0]
+        Lffinv_pack = torch.linalg.solve_triangular(Lff, pack, upper=False)
         v_4D = Lffinv_pack[None, :, :, :f_loc.size(-1)].repeat(K, 1, 1, 1) # K, N, N_u, N_
         if f_scale_tril is not None:
             S_4D = Lffinv_pack[None, :, :, -f_scale_tril.size(-1):].repeat(K, 1, 1, 1) # K, N, N_u, N_u or N_xN_u
@@ -923,7 +923,7 @@ class TT_SVGP(_GP):
             else:
                 M = tt_.explicit()
                 M.view(-1, M.shape[-1]**2)[:, ::M.shape[-1]+1] += self.jitter
-                L = torch.cholesky(M)
+                L = torch.linalg.cholesky(M)
                 logdet = 2*torch.log(L[..., np.arange(tt_.n), np.arange(tt_.n)]).sum(-1)
                 
             logdets.append(self.cheb_d_others[en]*logdet)
@@ -1188,7 +1188,7 @@ class SKI_SVGP(_GP):
             eps = torch.randn(XZ.shape, dtype=self.tensor_type, device=cov.device)
             
         return loc + self.mean_function(XZ) + \
-               (torch.cholesky(cov) * eps[..., None, :]).sum(-1)
+               (torch.linalg.cholesky(cov) * eps[..., None, :]).sum(-1)
     
     
     

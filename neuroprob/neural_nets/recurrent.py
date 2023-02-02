@@ -142,7 +142,7 @@ class Ring_EI(Recurrent):
             II = self.n_A[1]**2 * torch.exp((torch.cos(self.diff_II) - 1)/self.n_d**2)
             EI = f * torch.exp((torch.cos(self.diff_EI) - 1)/self.n_d**2)
             n = torch.cat((torch.cat((EE, EI), dim=1), torch.cat((EI.t(), II), dim=1)), dim=0)
-            self.L_n = torch.cholesky(n)
+            self.L_n = torch.linalg.cholesky(n)
             
     def constraints(self):
         self.w_A.data[self.connection_clip] = 0.0

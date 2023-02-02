@@ -8,7 +8,7 @@ checkpoint/
 */.ipynb_checkpoints/*
 .\ /
 docs/_build/
-.vscode
+.vscode/
 
 
 # Installer logs
@@ -16,5 +16,5 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 #scripts
-analysis/*.sh
 scripts/train_hdc_nonhdc*
+analysis/compute*.sh

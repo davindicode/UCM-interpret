@@ -7,7 +7,12 @@ import torch.optim as optim
 import pickle
 
 import sys
-sys.path.append("..")
+import os
+
+current = os.path.dirname(os.path.realpath(__file__))
+parent = os.path.dirname(current)
+sys.path.append(parent)
+sys.path.append('/../')
 
 
 import neuroprob as nprb
@@ -163,9 +168,9 @@ def enc_used(model_dict, covariates, learn_mean):
                 euclid_ls += [ls]
             
         if len(ang_ls) > 0:
-            kernel_tuples += [('SE', 'torus', torch.tensor(ang_ls))]
+            kernel_tuples += [('SE', 'torus', torch.tensor(np.array(ang_ls)))]
         if len(euclid_ls) > 0:
-            kernel_tuples += [('SE', 'euclid', torch.tensor(euclid_ls))]
+            kernel_tuples += [('SE', 'euclid', torch.tensor(np.array(euclid_ls)))]
 
         # z
         latent_k, latent_u = lib.models.latent_kernel(z_mode, num_induc, out_dims)
@@ -175,7 +180,7 @@ def enc_used(model_dict, covariates, learn_mean):
         # objects
         kernelobj, constraints = lib.models.create_kernel(kernel_tuples, 'exp', tensor_type)
 
-        Xu = torch.tensor(ind_list).T[None, ...].repeat(out_dims, 1, 1)
+        Xu = torch.tensor(np.array(ind_list)).T[None, ...].repeat(out_dims, 1, 1)
         inpd = Xu.shape[-1]
         inducing_points = nprb.kernels.kernel.inducing_points(out_dims, Xu, constraints, 
                                                               tensor_type=tensor_type)

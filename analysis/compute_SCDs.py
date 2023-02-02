@@ -44,7 +44,7 @@ mice_sessions = {'Mouse12': ['120806', '120807']}
 #    'Mouse28': []
 
 
-data_dir = '/scratches/ramanujan_2/dl543/HDC_PartIII/'
+data_dir = '/scratches/ramanujan_2/vn283/HDC_PartIII/preprocessed'
 models_dir = '/scratches/ramanujan_2/vn283/HDC_PartIII/checkpoint/'
 savedir = '/scratches/ramanujan_2/vn283/HDC_PartIII/scd_data/'
 

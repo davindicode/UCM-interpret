@@ -25,24 +25,16 @@ warnings.simplefilter('ignore')
 #    'Mouse28': ['140310', '140311', '140312', '140313', '140317', '140318'],
 #} 
 
-mice_sessions = {
-    'Mouse12': [],
-    'Mouse17': [],
-    'Mouse24': [],
-    'Mouse25': [],
-    'Mouse28': []
-} 
-
 # already done
-#    'Mouse12': ['120806'],
+#    'Mouse12': ['120806', '120807'],
 #    'Mouse17': ['130125', '130128', '130131', '130202', '130203'],
 #    'Mouse20': ['130514', '130515', '130516', '130517'],
 #    'Mouse24': ['131213', '131217', '131218'],
 #    'Mouse25': ['140124', '140128', '140129'],
-#    'Mouse28': ['140310']
+#    'Mouse28': ['140310'] 
 
 
-data_dir = '/scratches/ramanujan_2/dl543/HDC_PartIII/'
+data_dir = '/scratches/ramanujan_2/vn283/HDC_PartIII/preprocessed/'
 models_dir = '/scratches/ramanujan_2/vn283/HDC_PartIII/checkpoint/'
 savedir = '/scratches/ramanujan_2/vn283/HDC_PartIII/tc_data/'
 

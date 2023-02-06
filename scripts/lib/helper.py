@@ -457,7 +457,7 @@ def RG_pred_ll(model, validation_set, neuron_group=None, ll_mode='GH', ll_sample
     """
     vcov, vtrain, vbatch_info = validation_set
     time_steps = vtrain.shape[-1]
-    print('Data segment timesteps: {}'.format(time_steps))
+    #print('Data segment timesteps: {}'.format(time_steps))
     
     model.input_group.set_XZ(vcov, time_steps, batch_info=vbatch_info)
     model.likelihood.set_Y(vtrain, batch_info=vbatch_info)

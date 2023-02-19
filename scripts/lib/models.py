@@ -713,8 +713,9 @@ def load_model(checkpoint_dir, model_dict, dataset_dict, enc_used,
     """
     ### data ###
     has_latent = False if model_dict['z_mode'] == '' else True
-    cvdata = preprocess_data(dataset_dict, model_dict['folds'], [delay], [cv_run], 
-                             batch_info, model_dict['hist_len'], has_latent, trial_sizes)[0]
+    all_cvdata = preprocess_data(dataset_dict, model_dict['folds'], model_dict['delays'], [cv_run], 
+                             batch_info, model_dict['hist_len'], has_latent, trial_sizes)
+    cvdata = all_cvdata[model_dict['delays'].index(delay)]
     
     fit_data = (
         cvdata['spiketrain_fit'], 

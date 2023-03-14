@@ -101,6 +101,17 @@ def compute_P(full_model, covariates, show_neuron, MC=1000, trials=1):
     P_mc = torch.exp(logp)
     return P_mc    
 
+def compute_P_with_derivatives(full_model, covariates, show_neuron, MC=1000, trials=1):
+    """
+    Compute predictive count distribution given X.
+    """
+    F_dims = full_model.likelihood._neuron_to_F(show_neuron)
+    h = sample_F(full_model.mapping, full_model.likelihood, covariates, MC, F_dims, 
+                 trials=trials)
+    logp = full_model.likelihood.get_logp(h, show_neuron).data # samples, N, time, K
+    
+    P_mc = torch.exp(logp)
+    return P_mc, h    
 
 
 

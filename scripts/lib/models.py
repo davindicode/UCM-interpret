@@ -191,6 +191,21 @@ def get_basis(basis_mode='ew'):
     
     return basis
 
+def get_basis_grad(basis_mode='ew'):
+    if basis_mode == 'id':
+        basis = (lambda x: torch.ones_like(x),)
+    
+    elif basis_mode == 'ew': # element-wise
+        basis = (lambda x: torch.ones_like(x), lambda x: torch.exp(x))
+        
+    elif basis_mode == 'eq': # element-wise exp-quadratic
+        basis = (lambda x: torch.ones_like(x), lambda x: 2*x, lambda x: torch.exp(x))
+        
+    elif basis_mode == 'ec': # element-wise exp-cubic
+        basis = (lambda x: torch.ones_like(x), lambda x: 2*x, lambda x: 3*x**2, lambda x: torch.exp(x))
+
+    return basis
+        
 
 
 class net(nn.Module):

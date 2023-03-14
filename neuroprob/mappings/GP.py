@@ -371,7 +371,6 @@ class SVGP(_GP):
             XZ, self.induc_pts.Xu, self.kernel, self.induc_pts.u_loc, self.induc_pts.u_scale_tril, 
             compute_cov=~self.kernel_regression, full_cov=False, whiten=self.whiten, jitter=self.jitter
         )
-        
         return loc + self.mean_function(XZ), var
     
     
@@ -396,14 +395,23 @@ class SVGP(_GP):
             if eps is None: # sample random vector
                 eps = torch.randn(XZ.shape[:-1], dtype=self.tensor_type, device=cov.device)
 
-            return loc + self.mean_function(XZ) + \
+            samples = loc + self.mean_function(XZ) + \
                    (L * eps[..., None, :]).sum(-1)
+
+            self.samples = Parameter(samples, requires_grad=True)
+
+            return samples
         
         else: # decoupled sampling
             eps_f, eps_u = eps
             
+            samples = loc + self.mean_function(XZ) + \
+                   (L * eps[..., None, :]).sum(-1)
+            self.samples = Parameter(samples, requires_grad=True)
+
             return loc + self.mean_function(XZ) + \
                    (L * eps[..., None, :]).sum(-1)
+
         
     
     

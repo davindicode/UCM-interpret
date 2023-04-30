@@ -21,9 +21,24 @@ from neuroprob import utils
 import lib
 
 
-
-
 ### data ###
+
+def get_synthetic_data(name, path):
+    data = np.load(path + name + '.npz', allow_pickle=True)
+    dataset_dict = {
+        'name': data['name'].item(),
+        'covariates': data['covariates'].item(), 
+        'spiketrains': data['spiketrains'], 
+        'neurons': data['neurons'].item(), 
+        'metainfo': data['metainfo'].item(),
+        'tbin': data['tbin'].item(),
+        'timesamples': data['timesamples'].item(),
+        'max_count': data['max_count'].item(),
+        'bin_size': data['bin_size'].item(), 
+    }
+    return dataset_dict
+
+
 def get_dataset(mouse_id, session_id, phase, subset, bin_size, single_spikes, path):
 
     data = np.load(path + '{}_{}_{}.npz'.format(mouse_id, session_id, phase))
@@ -209,13 +224,18 @@ def main():
     parser.add_argument('--session_id', action='store', type=str)
     parser.add_argument('--phase', action='store', type=str)  # 'sleep', 'wake'
     parser.add_argument('--subset', action='store', type=str)  # 'hdc', 'nonhdc', 'all'
+    parser.add_argument('--synthetic', default=False, action='store_true')
+    parser.add_argument('--synthetic_name', action='store', type=str)
     args = parser.parse_args()
     
     dev = utils.pytorch.get_device(gpu=args.gpu)
     
     mouse_id, session_id, phase, subset = args.mouse_id, args.session_id, args.phase, args.subset
-    dataset_dict = get_dataset(mouse_id, session_id, phase, subset, 
+    if not args.synthetic:
+        dataset_dict = get_dataset(mouse_id, session_id, phase, subset, 
                                args.bin_size, args.single_spikes, args.data_path)
+    else:
+        dataset_dict = get_synthetic_data(args.synthetic_name, args.data_path)
 
     lib.models.train_model(dev, args, dataset_dict, enc_used, args.checkpoint_dir)
 

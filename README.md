@@ -1,4 +1,4 @@
-Project document: https://www.overleaf.com/project/5ffc2005b6e0f2cf12f1aae7
+Project document [Overleaf link](https://www.overleaf.com/read/hqdqdsxgqzfr#f805f9)
 
 Folders:
 - ```example/``` contains a notebook walking through model loading and analysis
